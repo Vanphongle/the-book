@@ -35,6 +35,7 @@ const rowToEntry = (r) => ({
   name: r.name || "",
   amount: Number(r.amount),
   outcome: r.outcome,
+  created_at: r.created_at || "",
 });
 
 // ---- public API --------------------------------------------------------------
@@ -59,6 +60,7 @@ export async function insertBet(entry) {
     name: entry.name,
     amount: entry.amount,
     outcome: entry.outcome,
+    created_at: entry.created_at,
   });
   if (error) throw error;
 }

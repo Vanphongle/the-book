@@ -26,6 +26,12 @@ const MULTS = [1, 10, 100];
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n || 0);
 const cx = (...a) => a.filter(Boolean).join(" ");
+const fmtDate = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
+};
 
 // Returns how a bet settles: direction (collect/pay/pending), dollar value, and if it's a half result.
 function settle(outcome, amount) {
@@ -43,6 +49,10 @@ function settle(outcome, amount) {
       return { dir: "pending", value: 0, half: false };
   }
 }
+
+// Display-only relabel: the UI shows the words "collect"/"pay" swapped, while the
+// colors stay tied to the settlement direction (collect = green, pay = red).
+const DIR_LABEL = { collect: "pay", pay: "collect" };
 
 const OUTCOMES = [
   { key: "win", label: "Win", tone: "win" },
@@ -66,6 +76,7 @@ export default function App() {
   const [rows, setRows] = useState(() => [makeRow()]);
   const [showEarnings, setShowEarnings] = useState(false);
   const [showAdd, setShowAdd] = useState(true);
+  const [sort, setSort] = useState("new"); // "new" = newest first, "old" = oldest first
   const [confirmId, setConfirmId] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -159,12 +170,14 @@ export default function App() {
     const p = personName;
     if (person === NEW_PLAYER && p) addPlayer(p);
     const stamp = Date.now().toString(36);
+    const now = new Date().toISOString();
     const created = valid.map((r, i) => ({
       id: stamp + i.toString(36) + Math.random().toString(36).slice(2, 5),
       person: p,
       name: r.note.trim(),
       amount: (parseFloat(r.amount) || 0) * r.mult,
       outcome: "pending",
+      created_at: now,
     }));
     setEntries((prev) => [...created, ...prev]); // optimistic
     setPerson("");
@@ -209,6 +222,16 @@ export default function App() {
     [entries, filter]
   );
 
+  // Sort by date. created_at is an ISO string, so string compare matches time order.
+  const sortedEntries = useMemo(() => {
+    const arr = [...visibleEntries];
+    arr.sort((a, b) => {
+      const c = (a.created_at || "").localeCompare(b.created_at || "");
+      return sort === "new" ? -c : c;
+    });
+    return arr;
+  }, [visibleEntries, sort]);
+
   const totals = useMemo(() => {
     let collect = 0, pay = 0, pending = 0;
     for (const e of visibleEntries) {
@@ -221,7 +244,7 @@ export default function App() {
   }, [visibleEntries]);
 
   const netCls = totals.net > 0 ? "bk-pos" : totals.net < 0 ? "bk-neg" : "bk-zero";
-  const netSign = totals.net > 0 ? "+" : totals.net < 0 ? "−" : "";
+  const netSign = totals.net > 0 ? "+" : "";
 
   return (
     <div className="bk">
@@ -361,15 +384,15 @@ export default function App() {
                 {netSign}
                 {money(Math.abs(totals.net))}
               </div>
-              <div className="bk-net-label">net — collect minus pay</div>
+              <div className="bk-net-label">net — pay minus collect</div>
               <div className="bk-subgrid">
                 <div>
                   <span className="v" style={{ color: "var(--win)" }}>{money(totals.collect)}</span>
-                  <span className="k">to collect</span>
+                  <span className="k">to pay</span>
                 </div>
                 <div>
-                  <span className="v" style={{ color: "var(--lose)" }}>{money(totals.pay)}</span>
-                  <span className="k">to pay</span>
+                  <span className="v" style={{ color: "var(--lose)" }}>+{money(totals.pay)}</span>
+                  <span className="k">to collect</span>
                 </div>
                 <div>
                   <span className="v">{totals.count}</span>
@@ -505,7 +528,22 @@ export default function App() {
                 : "No bets yet. Add one above to start the book."}
             </div>
           )}
-          {visibleEntries.map((e) => {
+          {sortedEntries.length > 0 && (
+            <div className="bk-list-head">
+              <span className="bk-list-count">
+                {sortedEntries.length} {sortedEntries.length === 1 ? "bet" : "bets"}
+              </span>
+              <div className="bk-sort" role="group" aria-label="Sort by date">
+                <button className={cx(sort === "new" && "on")} onClick={() => setSort("new")}>
+                  Newest
+                </button>
+                <button className={cx(sort === "old" && "on")} onClick={() => setSort("old")}>
+                  Oldest
+                </button>
+              </div>
+            </div>
+          )}
+          {sortedEntries.map((e) => {
             const s = settle(e.outcome, e.amount);
             const pending = s.dir === "pending";
             const isCollect = s.dir === "collect";
@@ -536,7 +574,12 @@ export default function App() {
                 </div>
 
                 <div className="bk-entry-meta">
-                  <span className="bk-entry-sub mono">bet {money(e.amount)}</span>
+                  <span className="bk-entry-sub mono">
+                    bet {money(e.amount)}
+                    {fmtDate(e.created_at) && (
+                      <span className="bk-entry-date"> · {fmtDate(e.created_at)}</span>
+                    )}
+                  </span>
                   {pending ? (
                     <span className="bk-entry-net bk-pending mono">
                       —<span className="bk-tag">not settled</span>
@@ -545,7 +588,7 @@ export default function App() {
                     <span className={cx("bk-entry-net mono", isCollect ? "bk-pos" : "bk-neg")}>
                       {money(s.value)}
                       <span className="bk-tag">
-                        {s.dir}
+                        {DIR_LABEL[s.dir]}
                         {s.half ? " ½" : ""}
                       </span>
                     </span>
@@ -592,10 +635,11 @@ const CSS = `
 .bk-wrap{max-width:560px; margin:0 auto; padding:22px 20px 60px;}
 
 /* Burger + players drawer */
-.bk-head-left{display:flex; align-items:center; gap:10px;}
-.bk-burger{width:32px; height:32px; border:1px solid var(--line); border-radius:8px; background:transparent;
-  color:var(--dim); font-size:1rem; line-height:1; cursor:pointer; transition:all .15s;}
-.bk-burger:hover{color:var(--brass); border-color:var(--line2);}
+.bk-head-left{display:flex; align-items:center; gap:12px;}
+.bk-burger{width:44px; height:44px; border:1px solid var(--line2); border-radius:10px; background:var(--panel2);
+  color:var(--brass); font-size:1.4rem; line-height:1; cursor:pointer; transition:all .15s; flex-shrink:0;}
+.bk-burger:hover{color:var(--brass); border-color:var(--brass-dim); background:rgba(203,162,78,.12);}
+.bk-burger:active{transform:scale(.95);}
 .bk-scrim{position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:40; animation:bk-fade .15s ease;}
 .bk-drawer{position:fixed; top:0; left:0; height:100%; width:260px; max-width:82vw; background:var(--panel);
   border-right:1px solid var(--line2); z-index:50; padding:18px 14px; overflow-y:auto;
@@ -632,7 +676,9 @@ const CSS = `
   background:var(--panel2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23A89C89' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 13px center;}
 @keyframes bk-fade{from{opacity:0;} to{opacity:1;}}
 
-.bk-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; min-height:30px;}
+.bk-head{position:sticky; top:0; z-index:30; background:var(--bg);
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 0; margin-bottom:14px; min-height:30px; border-bottom:1px solid var(--line);}
 .bk-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.18em; color:var(--brass); font-weight:700;}
 .bk-clear{font-size:.72rem; text-transform:uppercase; letter-spacing:.07em; color:var(--faint);
   background:transparent; border:1px solid var(--line); padding:6px 11px; border-radius:8px;
@@ -719,6 +765,16 @@ const CSS = `
 .bk-save:disabled{opacity:.4; cursor:not-allowed;}
 
 .bk-empty{text-align:center; color:var(--faint); font-size:.86rem; padding:34px 10px;}
+
+.bk-list-head{display:flex; align-items:center; justify-content:space-between; margin:2px 2px 12px;}
+.bk-list-count{font-size:.7rem; text-transform:uppercase; letter-spacing:.12em; color:var(--faint); font-weight:600;}
+.bk-sort{display:flex; border:1px solid var(--line2); border-radius:8px; overflow:hidden;}
+.bk-sort button{padding:7px 13px; border:none; background:var(--panel2); color:var(--faint);
+  font-size:.72rem; font-weight:600; cursor:pointer; font-family:var(--sans); transition:all .12s;}
+.bk-sort button + button{border-left:1px solid var(--line2);}
+.bk-sort button:hover{color:var(--ink);}
+.bk-sort button.on{background:rgba(203,162,78,.16); color:var(--brass);}
+.bk-entry-date{color:var(--faint);}
 
 /* Bet card */
 .bk-entry{border:1px solid var(--line); border-radius:14px; background:var(--panel);
