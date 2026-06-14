@@ -51,6 +51,7 @@ export default function App() {
   const [amount, setAmount] = useState("");
   const [mult, setMult] = useState(100);
   const [showEarnings, setShowEarnings] = useState(false);
+  const [showAdd, setShowAdd] = useState(true);
   const [confirmId, setConfirmId] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -225,7 +226,16 @@ export default function App() {
 
         {/* Add */}
         <section className="bk-form">
-          <div className="bk-form-title">Add a bet</div>
+          <button
+            className="bk-form-toggle"
+            onClick={() => setShowAdd((v) => !v)}
+            aria-expanded={showAdd}
+          >
+            <span className="bk-form-title">Add a bet</span>
+            <span className="bk-chev">{showAdd ? "▾" : "▸"}</span>
+          </button>
+          {showAdd && (
+          <div className="bk-form-body">
           <input
             className="bk-input"
             placeholder="Person — who pays / collects"
@@ -273,6 +283,8 @@ export default function App() {
           <button className="bk-save" disabled={!canAdd} onClick={save}>
             Save bet
           </button>
+          </div>
+          )}
         </section>
 
         {/* Lines */}
@@ -405,8 +417,11 @@ const CSS = `
 .bk-subgrid .k{font-size:.62rem; text-transform:uppercase; letter-spacing:.12em; color:var(--faint);}
 
 /* Add form */
-.bk-form{border:1px solid var(--line); border-radius:16px; background:var(--panel); padding:18px 18px 20px; margin-bottom:22px;}
-.bk-form-title{font-size:.66rem; text-transform:uppercase; letter-spacing:.16em; color:var(--brass-dim); margin-bottom:14px; font-weight:600;}
+.bk-form{border:1px solid var(--line); border-radius:16px; background:var(--panel); margin-bottom:22px;}
+.bk-form-toggle{width:100%; display:flex; align-items:center; justify-content:space-between;
+  background:transparent; border:none; cursor:pointer; padding:16px 18px; font-family:var(--sans);}
+.bk-form-title{font-size:.66rem; text-transform:uppercase; letter-spacing:.16em; color:var(--brass-dim); font-weight:600;}
+.bk-form-body{padding:2px 18px 20px; animation:bk-in .18s ease;}
 /* 16px keeps iOS Safari from auto-zooming the page when a field is focused. */
 .bk-input{width:100%; background:var(--panel2); border:1px solid var(--line2); border-radius:10px;
   color:var(--ink); padding:12px; font-size:16px; font-family:var(--sans); outline:none;
