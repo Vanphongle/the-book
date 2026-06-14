@@ -2,10 +2,10 @@ import { useState, useEffect, useMemo } from "react";
 import { fetchBets, insertBet, updateBetOutcome, deleteBet, clearBets } from "./db";
 
 // The Book — quick settlement calculator
-//   WIN       → collect the full bet amount
-//   HALF WIN  → collect half the bet amount
-//   HALF LOSE → pay half of the 90%  (= 45% of the bet)
-//   LOSE      → pay 90% of the bet amount
+//   WIN       → pay 90% of the bet amount
+//   HALF WIN  → pay half of the 90%  (= 45% of the bet)
+//   HALF LOSE → collect half the bet amount
+//   LOSE      → collect the full bet amount
 //   PENDING   → saved but not settled yet (counts for nothing until you pick)
 // Typed amount is multiplied by the chosen ×1 / ×10 / ×100 at save time.
 // Each bet line is saved to Supabase (see src/db.js).
@@ -21,13 +21,13 @@ const cx = (...a) => a.filter(Boolean).join(" ");
 function settle(outcome, amount) {
   switch (outcome) {
     case "win":
-      return { dir: "collect", value: amount, half: false };
-    case "halfwin":
-      return { dir: "collect", value: amount * 0.5, half: true };
-    case "halflose":
-      return { dir: "pay", value: amount * PAY_RATE * 0.5, half: true };
-    case "lose":
       return { dir: "pay", value: amount * PAY_RATE, half: false };
+    case "halfwin":
+      return { dir: "pay", value: amount * PAY_RATE * 0.5, half: true };
+    case "halflose":
+      return { dir: "collect", value: amount * 0.5, half: true };
+    case "lose":
+      return { dir: "collect", value: amount, half: false };
     case "pending":
     default:
       return { dir: "pending", value: 0, half: false };
