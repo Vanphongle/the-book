@@ -25,7 +25,13 @@ function lsWrite(arr) {
 }
 
 // row in DB  <->  entry in the UI
-const rowToEntry = (r) => ({ id: r.id, name: r.name || "", amount: Number(r.amount), outcome: r.outcome });
+const rowToEntry = (r) => ({
+  id: r.id,
+  person: r.person || "",
+  name: r.name || "",
+  amount: Number(r.amount),
+  outcome: r.outcome,
+});
 
 // ---- public API --------------------------------------------------------------
 export async function fetchBets() {
@@ -45,6 +51,7 @@ export async function insertBet(entry) {
   }
   const { error } = await supabase.from(TABLE).insert({
     id: entry.id,
+    person: entry.person,
     name: entry.name,
     amount: entry.amount,
     outcome: entry.outcome,

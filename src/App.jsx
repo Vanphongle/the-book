@@ -46,6 +46,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
 
+  const [person, setPerson] = useState("");
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
   const [mult, setMult] = useState(100);
@@ -93,11 +94,13 @@ export default function App() {
     if (!(a > 0)) return;
     const e = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      person: person.trim(),
       name: name.trim(),
       amount: real,
       outcome: "pending",
     };
     setEntries((prev) => [e, ...prev]); // optimistic
+    setPerson("");
     setName("");
     setAmount("");
     insertBet(e).catch((err) => {
@@ -225,7 +228,13 @@ export default function App() {
           <div className="bk-form-title">Add a bet</div>
           <input
             className="bk-input"
-            placeholder="Name (optional)"
+            placeholder="Person — who pays / collects"
+            value={person}
+            onChange={(e) => setPerson(e.target.value)}
+          />
+          <input
+            className="bk-input"
+            placeholder="Note / match info (optional)"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
@@ -279,9 +288,12 @@ export default function App() {
               <div className={cx("bk-entry", pending && "is-pending")} key={e.id}>
                 <div className="bk-entry-head">
                   <span className={cx("bk-dot", e.outcome)} />
-                  <span className={cx("bk-name", !e.name && "empty")}>
-                    {e.name || "No name"}
-                  </span>
+                  <div className="bk-entry-names">
+                    <span className={cx("bk-name", !e.person && "empty")}>
+                      {e.person || "No name"}
+                    </span>
+                    {e.name && <span className="bk-note">{e.name}</span>}
+                  </div>
                   {confirmId === e.id ? (
                     <div className="bk-confirm">
                       <button className="bk-confirm-yes" onClick={() => remove(e.id)}>delete</button>
@@ -401,6 +413,7 @@ const CSS = `
   transition:border-color .15s, box-shadow .15s;}
 .bk-input::placeholder{color:var(--faint);}
 .bk-input:focus{border-color:var(--brass); box-shadow:0 0 0 3px rgba(203,162,78,.16);}
+.bk-input + .bk-input{margin-top:10px;}
 
 .bk-field-row{display:grid; grid-template-columns:auto 1fr; gap:12px; margin-top:12px;}
 .bk-mult{display:flex; border:1px solid var(--line2); border-radius:10px; overflow:hidden; background:var(--panel2);}
@@ -437,8 +450,10 @@ const CSS = `
 .bk-dot.halfwin{border:2px solid var(--win);}
 .bk-dot.halflose{border:2px solid var(--lose);}
 .bk-dot.pending{border:2px solid var(--brass-dim);}
-.bk-name{flex:1; min-width:0; font-size:.98rem; color:var(--ink); overflow-wrap:anywhere; font-weight:500; line-height:1.35;}
+.bk-entry-names{flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;}
+.bk-name{font-size:.98rem; color:var(--ink); overflow-wrap:anywhere; font-weight:600; line-height:1.35;}
 .bk-name.empty{color:var(--faint); font-weight:400;}
+.bk-note{font-size:.8rem; color:var(--dim); overflow-wrap:anywhere; line-height:1.35;}
 
 .bk-entry-meta{display:flex; align-items:baseline; justify-content:space-between; gap:12px;
   margin:9px 0 13px; padding-left:18px;}
