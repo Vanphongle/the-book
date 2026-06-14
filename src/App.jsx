@@ -1,5 +1,15 @@
 import { useState, useEffect, useMemo } from "react";
-import { fetchBets, insertBet, updateBetOutcome, deleteBet, clearBets } from "./db";
+import {
+  fetchBets,
+  insertBet,
+  updateBetOutcome,
+  deleteBet,
+  clearBets,
+  fetchPlayers,
+  insertPlayer,
+} from "./db";
+
+const NEW_PLAYER = "__new__";
 
 // The Book — quick settlement calculator
 //   WIN       → pay 90% of the bet amount
@@ -50,12 +60,20 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
 
-  const [person, setPerson] = useState("");
+  const [players, setPlayers] = useState([]);
+  const [person, setPerson] = useState(""); // selected player name, or NEW_PLAYER
+  const [newPlayer, setNewPlayer] = useState(""); // typed name when adding inline
   const [rows, setRows] = useState(() => [makeRow()]);
   const [showEarnings, setShowEarnings] = useState(false);
   const [showAdd, setShowAdd] = useState(true);
   const [confirmId, setConfirmId] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
+
+  // Players drawer + the active player filter (null = all players).
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [filter, setFilter] = useState(null);
+  const [addingPlayer, setAddingPlayer] = useState(false);
+  const [drawerNewName, setDrawerNewName] = useState("");
 
   // Initial load: bets from Supabase (or localStorage fallback).
   useEffect(() => {
@@ -74,6 +92,9 @@ export default function App() {
           console.error(e);
         }
       });
+    fetchPlayers()
+      .then((rows) => alive && setPlayers(rows))
+      .catch((e) => console.error(e));
     return () => {
       alive = false;
     };
@@ -88,9 +109,37 @@ export default function App() {
     }
   }
 
+  // Drawer list = saved players ∪ any person already used on a bet (so legacy
+  // names and pre-added players both show). Sorted, case-insensitive.
+  const playerNames = useMemo(() => {
+    const set = new Set();
+    for (const p of players) if (p.name) set.add(p.name);
+    for (const e of entries) if (e.person) set.add(e.person);
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [players, entries]);
+
+  const countByPlayer = useMemo(() => {
+    const m = {};
+    for (const e of entries) if (e.person) m[e.person] = (m[e.person] || 0) + 1;
+    return m;
+  }, [entries]);
+
+  // Save a new player name (skips blanks and case-insensitive duplicates).
+  function addPlayer(rawName) {
+    const name = rawName.trim();
+    if (!name) return;
+    const exists = players.some((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (exists) return;
+    const p = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name };
+    setPlayers((prev) => [...prev, p]);
+    insertPlayer(p).catch((err) => console.error(err));
+  }
+
   const validRows = rows.filter((r) => (parseFloat(r.amount) || 0) > 0);
   const totalReal = validRows.reduce((s, r) => s + (parseFloat(r.amount) || 0) * r.mult, 0);
   const canAdd = validRows.length > 0;
+  // Effective player name for the current form (handles the inline "+ New player").
+  const personName = (person === NEW_PLAYER ? newPlayer : person).trim();
 
   function updateRow(key, patch) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -107,7 +156,8 @@ export default function App() {
   function save() {
     const valid = rows.filter((r) => (parseFloat(r.amount) || 0) > 0);
     if (valid.length === 0) return;
-    const p = person.trim();
+    const p = personName;
+    if (person === NEW_PLAYER && p) addPlayer(p);
     const stamp = Date.now().toString(36);
     const created = valid.map((r, i) => ({
       id: stamp + i.toString(36) + Math.random().toString(36).slice(2, 5),
@@ -118,6 +168,7 @@ export default function App() {
     }));
     setEntries((prev) => [...created, ...prev]); // optimistic
     setPerson("");
+    setNewPlayer("");
     setRows([makeRow()]);
     Promise.all(created.map((e) => insertBet(e))).catch((err) => {
       setErr("Failed to save one or more bets.");
@@ -152,16 +203,22 @@ export default function App() {
     });
   }
 
+  // The book respects the active player filter; the earnings total follows suit.
+  const visibleEntries = useMemo(
+    () => (filter ? entries.filter((e) => e.person === filter) : entries),
+    [entries, filter]
+  );
+
   const totals = useMemo(() => {
     let collect = 0, pay = 0, pending = 0;
-    for (const e of entries) {
+    for (const e of visibleEntries) {
       const s = settle(e.outcome, e.amount);
       if (s.dir === "collect") collect += s.value;
       else if (s.dir === "pay") pay += s.value;
       else pending += 1;
     }
-    return { collect, pay, net: collect - pay, count: entries.length, pending };
-  }, [entries]);
+    return { collect, pay, net: collect - pay, count: visibleEntries.length, pending };
+  }, [visibleEntries]);
 
   const netCls = totals.net > 0 ? "bk-pos" : totals.net < 0 ? "bk-neg" : "bk-zero";
   const netSign = totals.net > 0 ? "+" : totals.net < 0 ? "−" : "";
@@ -169,9 +226,88 @@ export default function App() {
   return (
     <div className="bk">
       <style>{CSS}</style>
+
+      {/* Players drawer */}
+      {drawerOpen && (
+        <div className="bk-scrim" onClick={() => setDrawerOpen(false)} />
+      )}
+      <aside className={cx("bk-drawer", drawerOpen && "open")} aria-hidden={!drawerOpen}>
+        <div className="bk-drawer-head">
+          <span className="bk-drawer-title">Players</span>
+          <button
+            className="bk-drawer-add"
+            onClick={() => {
+              setAddingPlayer((v) => !v);
+              setDrawerNewName("");
+            }}
+            aria-label="Add player"
+          >
+            +
+          </button>
+        </div>
+
+        {addingPlayer && (
+          <form
+            className="bk-player-new"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addPlayer(drawerNewName);
+              setDrawerNewName("");
+              setAddingPlayer(false);
+            }}
+          >
+            <input
+              className="bk-input"
+              placeholder="Player name"
+              value={drawerNewName}
+              onChange={(e) => setDrawerNewName(e.target.value)}
+              autoFocus
+            />
+            <button className="bk-player-save" type="submit">Add</button>
+          </form>
+        )}
+
+        <button
+          className={cx("bk-player-item", filter === null && "on")}
+          onClick={() => {
+            setFilter(null);
+            setDrawerOpen(false);
+          }}
+        >
+          <span className="bk-player-name">All players</span>
+          <span className="bk-player-count">{entries.length}</span>
+        </button>
+
+        {playerNames.length === 0 && (
+          <div className="bk-drawer-empty">No players yet. Tap + to add one.</div>
+        )}
+        {playerNames.map((nm) => (
+          <button
+            key={nm}
+            className={cx("bk-player-item", filter === nm && "on")}
+            onClick={() => {
+              setFilter(nm);
+              setDrawerOpen(false);
+            }}
+          >
+            <span className="bk-player-name">{nm}</span>
+            <span className="bk-player-count">{countByPlayer[nm] || 0}</span>
+          </button>
+        ))}
+      </aside>
+
       <div className="bk-wrap">
         <header className="bk-head">
-          <span className="bk-title">The Book</span>
+          <div className="bk-head-left">
+            <button
+              className="bk-burger"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Open players menu"
+            >
+              ☰
+            </button>
+            <span className="bk-title">The Book</span>
+          </div>
           {entries.length > 0 &&
             (confirmClear ? (
               <span className="bk-clear-confirm">
@@ -186,6 +322,17 @@ export default function App() {
         {err && (
           <div className="bk-err" onClick={() => setErr("")} title="Dismiss">
             {err}
+          </div>
+        )}
+
+        {filter && (
+          <div className="bk-filter-bar">
+            <span>
+              Showing <strong>{filter}</strong>
+            </span>
+            <button className="bk-filter-clear" onClick={() => setFilter(null)}>
+              ✕ all players
+            </button>
           </div>
         )}
 
@@ -251,12 +398,26 @@ export default function App() {
           </button>
           {showAdd && (
           <div className="bk-form-body">
-          <input
-            className="bk-input"
-            placeholder="Person — who pays / collects"
+          <select
+            className="bk-input bk-select"
             value={person}
             onChange={(e) => setPerson(e.target.value)}
-          />
+          >
+            <option value="">Person — who pays / collects</option>
+            {playerNames.map((nm) => (
+              <option key={nm} value={nm}>{nm}</option>
+            ))}
+            <option value={NEW_PLAYER}>+ New player…</option>
+          </select>
+          {person === NEW_PLAYER && (
+            <input
+              className="bk-input bk-input-new"
+              placeholder="New player name"
+              value={newPlayer}
+              onChange={(e) => setNewPlayer(e.target.value)}
+              autoFocus
+            />
+          )}
           <div className="bk-rows">
             {rows.map((r) => (
               <div className="bk-brow" key={r.key}>
@@ -317,8 +478,8 @@ export default function App() {
               <>
                 total <span className="mono">{money(totalReal)}</span> — {validRows.length}{" "}
                 {validRows.length === 1 ? "bet" : "bets"}
-                {person.trim() && (
-                  <> for <span className="bk-prev-person">{person.trim()}</span></>
+                {personName && (
+                  <> for <span className="bk-prev-person">{personName}</span></>
                 )}
               </>
             ) : (
@@ -337,10 +498,14 @@ export default function App() {
 
         {/* Lines */}
         <section>
-          {loaded && entries.length === 0 && (
-            <div className="bk-empty">No bets yet. Add one above to start the book.</div>
+          {loaded && visibleEntries.length === 0 && (
+            <div className="bk-empty">
+              {filter
+                ? `No bets for ${filter}.`
+                : "No bets yet. Add one above to start the book."}
+            </div>
           )}
-          {entries.map((e) => {
+          {visibleEntries.map((e) => {
             const s = settle(e.outcome, e.amount);
             const pending = s.dir === "pending";
             const isCollect = s.dir === "collect";
@@ -425,6 +590,47 @@ const CSS = `
 .bk *{box-sizing:border-box;}
 .bk .mono{font-family:var(--mono); font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;}
 .bk-wrap{max-width:560px; margin:0 auto; padding:22px 20px 60px;}
+
+/* Burger + players drawer */
+.bk-head-left{display:flex; align-items:center; gap:10px;}
+.bk-burger{width:32px; height:32px; border:1px solid var(--line); border-radius:8px; background:transparent;
+  color:var(--dim); font-size:1rem; line-height:1; cursor:pointer; transition:all .15s;}
+.bk-burger:hover{color:var(--brass); border-color:var(--line2);}
+.bk-scrim{position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:40; animation:bk-fade .15s ease;}
+.bk-drawer{position:fixed; top:0; left:0; height:100%; width:260px; max-width:82vw; background:var(--panel);
+  border-right:1px solid var(--line2); z-index:50; padding:18px 14px; overflow-y:auto;
+  transform:translateX(-100%); transition:transform .2s ease; display:flex; flex-direction:column; gap:3px;}
+.bk-drawer.open{transform:none;}
+.bk-drawer-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; padding:0 6px;}
+.bk-drawer-title{font-size:.72rem; text-transform:uppercase; letter-spacing:.16em; color:var(--brass); font-weight:700;}
+.bk-drawer-add{width:30px; height:30px; border:1px solid var(--line2); border-radius:8px; background:transparent;
+  color:var(--brass); font-size:1.1rem; line-height:1; cursor:pointer; transition:all .15s;}
+.bk-drawer-add:hover{border-color:var(--brass); background:rgba(203,162,78,.12);}
+.bk-player-new{display:flex; gap:6px; margin-bottom:8px;}
+.bk-player-new .bk-input{padding:9px 10px;}
+.bk-player-save{padding:0 12px; border:1px solid var(--brass); border-radius:8px; background:rgba(203,162,78,.16);
+  color:var(--brass); font-weight:700; font-size:.78rem; cursor:pointer; font-family:var(--sans);}
+.bk-player-item{display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
+  padding:11px 12px; border:none; border-radius:9px; background:transparent; color:var(--ink);
+  font-family:var(--sans); font-size:.9rem; cursor:pointer; text-align:left; transition:background .12s;}
+.bk-player-item:hover{background:var(--panel2);}
+.bk-player-item.on{background:rgba(203,162,78,.14); color:var(--brass);}
+.bk-player-name{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.bk-player-count{font-family:var(--mono); font-size:.74rem; color:var(--faint); flex-shrink:0;}
+.bk-player-item.on .bk-player-count{color:var(--brass-dim);}
+.bk-drawer-empty{color:var(--faint); font-size:.8rem; padding:10px 12px;}
+
+.bk-filter-bar{display:flex; align-items:center; justify-content:space-between; gap:10px;
+  background:rgba(203,162,78,.1); border:1px solid var(--brass-dim); border-radius:10px;
+  padding:9px 14px; margin-bottom:14px; font-size:.82rem; color:var(--dim);}
+.bk-filter-bar strong{color:var(--brass); font-weight:700;}
+.bk-filter-clear{background:transparent; border:none; color:var(--faint); cursor:pointer;
+  font-size:.74rem; font-family:var(--sans); font-weight:600;}
+.bk-filter-clear:hover{color:var(--lose);}
+
+.bk-select{appearance:none; -webkit-appearance:none; cursor:pointer; padding-right:36px;
+  background:var(--panel2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23A89C89' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 13px center;}
+@keyframes bk-fade{from{opacity:0;} to{opacity:1;}}
 
 .bk-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; min-height:30px;}
 .bk-title{font-size:.8rem; text-transform:uppercase; letter-spacing:.18em; color:var(--brass); font-weight:700;}

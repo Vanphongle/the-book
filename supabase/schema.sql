@@ -35,3 +35,23 @@ create policy "anon full access"
   to anon
   using (true)
   with check (true);
+
+-- Players — a managed list you can sort/filter bets by. A bet links to a player
+-- by the `person` name string (kept simple; no FK so legacy rows keep working).
+create table if not exists public.players (
+  id         text primary key,            -- client-generated id
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+
+grant select, insert, update, delete on table public.players to anon;
+
+alter table public.players enable row level security;
+
+drop policy if exists "anon full access" on public.players;
+create policy "anon full access"
+  on public.players
+  for all
+  to anon
+  using (true)
+  with check (true);
