@@ -41,15 +41,17 @@ const OUTCOMES = [
   { key: "lose", label: "Lose", tone: "lose" },
 ];
 
+// One editable line in the bulk add form. All rows in a save share the same person.
+let rowSeq = 0;
+const makeRow = () => ({ key: `r${rowSeq++}`, note: "", mult: 100, amount: "" });
+
 export default function App() {
   const [entries, setEntries] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
 
   const [person, setPerson] = useState("");
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
-  const [mult, setMult] = useState(100);
+  const [rows, setRows] = useState(() => [makeRow()]);
   const [showEarnings, setShowEarnings] = useState(false);
   const [showAdd, setShowAdd] = useState(true);
   const [confirmId, setConfirmId] = useState(null);
@@ -86,26 +88,39 @@ export default function App() {
     }
   }
 
-  const a = parseFloat(amount) || 0;
-  const real = a * mult;
-  const canAdd = a > 0;
+  const validRows = rows.filter((r) => (parseFloat(r.amount) || 0) > 0);
+  const totalReal = validRows.reduce((s, r) => s + (parseFloat(r.amount) || 0) * r.mult, 0);
+  const canAdd = validRows.length > 0;
 
-  // Save the bet first; it starts unsettled and you pick the outcome on its card.
+  function updateRow(key, patch) {
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  }
+  function addRow() {
+    setRows((prev) => [...prev, makeRow()]);
+  }
+  function removeRow(key) {
+    setRows((prev) => (prev.length > 1 ? prev.filter((r) => r.key !== key) : prev));
+  }
+
+  // Save every filled-in row as its own bet, all sharing the same person. Each
+  // starts unsettled; you pick the outcome on each card afterward.
   function save() {
-    if (!(a > 0)) return;
-    const e = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      person: person.trim(),
-      name: name.trim(),
-      amount: real,
+    const valid = rows.filter((r) => (parseFloat(r.amount) || 0) > 0);
+    if (valid.length === 0) return;
+    const p = person.trim();
+    const stamp = Date.now().toString(36);
+    const created = valid.map((r, i) => ({
+      id: stamp + i.toString(36) + Math.random().toString(36).slice(2, 5),
+      person: p,
+      name: r.note.trim(),
+      amount: (parseFloat(r.amount) || 0) * r.mult,
       outcome: "pending",
-    };
-    setEntries((prev) => [e, ...prev]); // optimistic
+    }));
+    setEntries((prev) => [...created, ...prev]); // optimistic
     setPerson("");
-    setName("");
-    setAmount("");
-    insertBet(e).catch((err) => {
-      setErr("Failed to save the bet.");
+    setRows([makeRow()]);
+    Promise.all(created.map((e) => insertBet(e))).catch((err) => {
+      setErr("Failed to save one or more bets.");
       console.error(err);
       resync();
     });
@@ -242,46 +257,79 @@ export default function App() {
             value={person}
             onChange={(e) => setPerson(e.target.value)}
           />
-          <input
-            className="bk-input"
-            placeholder="Note / match info (optional)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-
-          <div className="bk-field-row">
-            <div className="bk-mult" role="group" aria-label="Amount multiplier">
-              {MULTS.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className={cx(mult === m && "on")}
-                  onClick={() => setMult(m)}
-                >
-                  ×{m}
-                </button>
-              ))}
-            </div>
-            <div className="bk-money">
-              <span className="bk-prefix">$</span>
-              <input
-                className="bk-input mono bk-amt"
-                inputMode="decimal"
-                placeholder="0"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && save()}
-              />
-              <span className="bk-suffix">×{mult}</span>
-            </div>
+          <div className="bk-rows">
+            {rows.map((r) => (
+              <div className="bk-brow" key={r.key}>
+                <div className="bk-brow-top">
+                  <input
+                    className="bk-input bk-brow-note"
+                    placeholder="Note / match (optional)"
+                    value={r.note}
+                    onChange={(ev) => updateRow(r.key, { note: ev.target.value })}
+                  />
+                  {rows.length > 1 && (
+                    <button
+                      className="bk-brow-del"
+                      type="button"
+                      onClick={() => removeRow(r.key)}
+                      aria-label="Remove row"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <div className="bk-brow-bot">
+                  <div className="bk-mult" role="group" aria-label="Amount multiplier">
+                    {MULTS.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        className={cx(r.mult === m && "on")}
+                        onClick={() => updateRow(r.key, { mult: m })}
+                      >
+                        ×{m}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="bk-money">
+                    <span className="bk-prefix">$</span>
+                    <input
+                      className="bk-input mono bk-amt"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={r.amount}
+                      onChange={(ev) => updateRow(r.key, { amount: ev.target.value })}
+                      onKeyDown={(ev) => ev.key === "Enter" && save()}
+                    />
+                    <span className="bk-suffix">×{r.mult}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
 
+          <button className="bk-addrow" type="button" onClick={addRow}>
+            + Add row
+          </button>
+
           <div className="bk-preview">
-            {canAdd ? <>bet amount = <span className="mono">{money(real)}</span></> : <>&nbsp;</>}
+            {canAdd ? (
+              <>
+                total <span className="mono">{money(totalReal)}</span> — {validRows.length}{" "}
+                {validRows.length === 1 ? "bet" : "bets"}
+                {person.trim() && (
+                  <> for <span className="bk-prev-person">{person.trim()}</span></>
+                )}
+              </>
+            ) : (
+              <>&nbsp;</>
+            )}
           </div>
 
           <button className="bk-save" disabled={!canAdd} onClick={save}>
-            Save bet
+            {canAdd
+              ? `Save ${validRows.length} bet${validRows.length === 1 ? "" : "s"}`
+              : "Save bets"}
           </button>
           </div>
           )}
@@ -430,7 +478,19 @@ const CSS = `
 .bk-input:focus{border-color:var(--brass); box-shadow:0 0 0 3px rgba(203,162,78,.16);}
 .bk-input + .bk-input{margin-top:10px;}
 
-.bk-field-row{display:grid; grid-template-columns:auto 1fr; gap:12px; margin-top:12px;}
+.bk-rows{display:flex; flex-direction:column; gap:8px; margin-top:12px;}
+.bk-brow{border:1px solid var(--line); border-radius:11px; padding:10px;}
+.bk-brow-top{display:flex; gap:8px; align-items:center;}
+.bk-brow-note{flex:1; min-width:0;}
+.bk-brow-del{width:34px; height:34px; flex-shrink:0; border:1px solid var(--line2); border-radius:8px;
+  background:transparent; color:var(--faint); cursor:pointer; font-size:.8rem; line-height:1; transition:all .15s;}
+.bk-brow-del:hover{color:var(--lose); border-color:var(--lose);}
+.bk-brow-bot{display:grid; grid-template-columns:auto 1fr; gap:8px; margin-top:8px;}
+.bk-addrow{margin-top:10px; width:100%; padding:11px; border:1px dashed var(--line2); border-radius:10px;
+  background:transparent; color:var(--brass-dim); cursor:pointer; font-family:var(--sans);
+  font-size:.78rem; font-weight:700; letter-spacing:.04em; transition:all .15s;}
+.bk-addrow:hover{color:var(--brass); border-color:var(--brass-dim);}
+.bk-prev-person{color:var(--ink); font-weight:600;}
 .bk-mult{display:flex; border:1px solid var(--line2); border-radius:10px; overflow:hidden; background:var(--panel2);}
 .bk-mult button{padding:0 13px; min-width:48px; border:none; background:transparent; color:var(--dim);
   font-family:var(--mono); font-size:.84rem; font-weight:600; cursor:pointer; transition:all .12s;}
