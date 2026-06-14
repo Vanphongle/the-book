@@ -3,11 +3,15 @@
 A quick bet-settlement calculator. Each bet line is saved to **Supabase**; the app
 deploys to **Vercel**. Built with Vite + React.
 
-Settlement rules (typed amount is multiplied by 100):
+Each bet is saved first (unsettled), then you pick its result on the card. The
+typed amount is multiplied by your chosen **×1 / ×10 / ×100** at save time.
+
+Settlement rules:
 - **Win** → collect the full bet
 - **½ Win** → collect half
 - **½ Lose** → pay 45% (half of 90%)
 - **Lose** → pay 90%
+- _unsettled_ → counts for nothing until you pick a result
 
 ## Run locally
 

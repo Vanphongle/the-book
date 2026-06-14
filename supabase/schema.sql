@@ -7,7 +7,7 @@ create table if not exists public.bets (
   id         text primary key,            -- client-generated id
   name       text default '',
   amount     numeric not null,            -- already multiplied by 100
-  outcome    text not null check (outcome in ('win', 'halfwin', 'halflose', 'lose')),
+  outcome    text not null check (outcome in ('win', 'halfwin', 'halflose', 'lose', 'pending')),
   created_at timestamptz not null default now()
 );
 
