@@ -120,6 +120,15 @@ export default function App() {
     }
   }
 
+  // When you filter to a player, prefill the Add-a-bet Person with them so you
+  // don't have to pick the same person again.
+  useEffect(() => {
+    if (filter) {
+      setPerson(filter);
+      setNewPlayer("");
+    }
+  }, [filter]);
+
   // Drawer list = saved players ∪ any person already used on a bet (so legacy
   // names and pre-added players both show). Sorted, case-insensitive.
   const playerNames = useMemo(() => {
@@ -183,7 +192,7 @@ export default function App() {
       created_at: new Date(base - i).toISOString(),
     }));
     setEntries((prev) => [...created, ...prev]); // optimistic
-    setPerson("");
+    setPerson(filter || ""); // keep the filtered player prefilled for the next bet
     setNewPlayer("");
     setRows([makeRow()]);
     Promise.all(created.map((e) => insertBet(e))).catch((err) => {
@@ -394,11 +403,11 @@ export default function App() {
               <div className="bk-net-label">net — collect minus pay</div>
               <div className="bk-subgrid">
                 <div>
-                  <span className="v" style={{ color: "var(--win)" }}>+{money(totals.collect)}</span>
+                  <span className="v" style={{ color: "var(--lose)" }}>{money(totals.collect)}</span>
                   <span className="k">to collect</span>
                 </div>
                 <div>
-                  <span className="v" style={{ color: "var(--lose)" }}>{money(totals.pay)}</span>
+                  <span className="v" style={{ color: "var(--win)" }}>+{money(totals.pay)}</span>
                   <span className="k">to pay</span>
                 </div>
                 <div>
@@ -607,7 +616,9 @@ export default function App() {
                       <span className="bk-tag">even</span>
                     </span>
                   ) : (
-                    <span className={cx("bk-entry-net mono", isCollect ? "bk-pos" : "bk-neg")}>
+                    // Color follows player win/lose, not money direction: a Win
+                    // pays out (collect=false) yet shows green so it reads as a win.
+                    <span className={cx("bk-entry-net mono", isCollect ? "bk-neg" : "bk-pos")}>
                       {money(s.value)}
                       <span className="bk-tag">
                         {s.dir}
