@@ -1121,7 +1121,7 @@ const CSS = `
   .bk{background:#fff !important; min-height:0;}
   .bk-print{display:block !important; color:#15120e;}
   .bk-print, .bk-print *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
-  .bk-print-head{border-bottom:2px solid #15120e; padding-bottom:10px; margin-bottom:16px;}
+  .bk-print-head{border-bottom:1px solid #999; padding-bottom:10px; margin-bottom:16px;}
   .bk-print-title{font-size:22px; font-weight:800;}
   .bk-print-sub{font-size:12px; color:#666; margin-top:3px;}
   .bk-print-table{width:100%; border-collapse:collapse; font-size:12.5px;}
@@ -1131,7 +1131,7 @@ const CSS = `
   .bk-print-table .num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
   .bk-print .pos{color:#1a7f3c !important; font-weight:700;}
   .bk-print .neg{color:#c0392b !important; font-weight:700;}
-  .bk-print-totals{margin-top:16px; padding-top:12px; border-top:2px solid #15120e;
+  .bk-print-totals{margin-top:16px; padding-top:12px; border-top:1px solid #999;
     font-size:13px; line-height:1.7;}
   .bk-print-net{font-size:16px; font-weight:800; margin-top:6px;}
   .bk-print-pending{font-size:11px; color:#888; margin-top:4px;}
