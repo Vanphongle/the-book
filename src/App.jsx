@@ -316,6 +316,108 @@ export default function App() {
       resync();
     });
   }
+
+  // Build a downloadable PDF statement for the filtered player. Generated entirely
+  // in code (no browser print dialog), so there is no URL/date footer. Uses an
+  // embedded Vietnamese-capable font so accented names render correctly.
+  async function generatePdf() {
+    if (!filter || printBets.length === 0) return;
+    try {
+      const [{ jsPDF }, autoTableMod, font] = await Promise.all([
+        import("jspdf"),
+        import("jspdf-autotable"),
+        import("./vietFont.js"),
+      ]);
+      const autoTable = autoTableMod.autoTable || autoTableMod.default;
+      const doc = new jsPDF({ unit: "pt", format: "letter" });
+      doc.addFileToVFS("BVP-Regular.ttf", font.regular);
+      doc.addFont("BVP-Regular.ttf", "viet", "normal");
+      doc.addFileToVFS("BVP-Bold.ttf", font.bold);
+      doc.addFont("BVP-Bold.ttf", "viet", "bold");
+
+      const green = [26, 127, 60];
+      const red = [192, 57, 43];
+      const M = 40;
+
+      doc.setFont("viet", "bold");
+      doc.setFontSize(20);
+      doc.text(filter, M, 52);
+      doc.setFont("viet", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(120);
+      doc.text(
+        `Bet statement · ${new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(new Date())}`,
+        M,
+        70
+      );
+      doc.setTextColor(0);
+
+      const rows = printBets.map((e) => {
+        const s = settle(e.outcome, e.amount);
+        const isPay = s.dir === "pay";
+        const isCollect = s.dir === "collect";
+        const amt =
+          s.dir === "pending"
+            ? "-"
+            : s.dir === "even"
+            ? money(0)
+            : (isPay ? "+" : "-") + money(s.value);
+        return {
+          cells: [fmtDate(e.created_at), e.name || "-", money(e.amount), PRINT_LABEL[e.outcome] || e.outcome, amt],
+          color: isPay ? green : isCollect ? red : null,
+        };
+      });
+
+      autoTable(doc, {
+        startY: 86,
+        margin: { left: M, right: M },
+        head: [["Date", "Note", "Bet", "Result", "Amount"]],
+        body: rows.map((r) => r.cells),
+        styles: { font: "viet", fontSize: 9, cellPadding: 4, lineColor: [228, 224, 214], lineWidth: 0.5, textColor: 20 },
+        headStyles: { font: "viet", fontStyle: "bold", fillColor: [242, 242, 242], textColor: 70 },
+        columnStyles: { 2: { halign: "right" }, 4: { halign: "right" } },
+        didParseCell: (data) => {
+          if (data.section === "body" && (data.column.index === 3 || data.column.index === 4)) {
+            const c = rows[data.row.index].color;
+            if (c) {
+              data.cell.styles.textColor = c;
+              data.cell.styles.fontStyle = "bold";
+            }
+          }
+        },
+      });
+
+      let y = (doc.lastAutoTable?.finalY || 86) + 28;
+      doc.setFont("viet", "normal");
+      doc.setFontSize(11);
+      doc.setTextColor(0);
+      doc.text("Player won:", M, y);
+      doc.setTextColor(green[0], green[1], green[2]);
+      doc.text(`+${money(totals.pay)}`, M + 120, y);
+      y += 16;
+      doc.setTextColor(0);
+      doc.text("Player lost:", M, y);
+      doc.setTextColor(red[0], red[1], red[2]);
+      doc.text(`-${money(totals.collect)}`, M + 120, y);
+      y += 28;
+      doc.setFont("viet", "bold");
+      doc.setFontSize(15);
+      doc.setTextColor(0);
+      doc.text(filter, M, y);
+      if (pnet === 0) {
+        doc.text(money(0), M + 120, y);
+      } else {
+        const c = pnet > 0 ? green : red;
+        doc.setTextColor(c[0], c[1], c[2]);
+        doc.text(`${pnet > 0 ? "+" : "-"}${money(Math.abs(pnet))}`, M + 120, y);
+      }
+
+      doc.save(`${filter.replace(/\s+/g, "_")}_statement.pdf`);
+    } catch (e) {
+      setErr("Could not generate the PDF.");
+      console.error(e);
+    }
+  }
   function remove(id) {
     setEntries((prev) => prev.filter((e) => e.id !== id));
     setConfirmId(null);
@@ -693,7 +795,7 @@ export default function App() {
               Showing <strong>{filter}</strong>
             </span>
             <span className="bk-filter-actions">
-              <button className="bk-pdf-btn" onClick={() => window.print()}>
+              <button className="bk-pdf-btn" onClick={generatePdf}>
                 ⬇ PDF
               </button>
               <button className="bk-filter-clear" onClick={() => setFilter(null)}>
@@ -969,77 +1071,6 @@ export default function App() {
         </section>
       </div>
 
-      {/* Printable per-player statement (only visible when printing). */}
-      {filter && (
-        <div className="bk-print">
-          <div className="bk-print-head">
-            <div className="bk-print-title">{filter}</div>
-            <div className="bk-print-sub">
-              Bet statement · {new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(new Date())}
-            </div>
-          </div>
-
-          <table className="bk-print-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Note</th>
-                <th className="num">Bet</th>
-                <th>Result</th>
-                <th className="num">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {printBets.map((e) => {
-                const s = settle(e.outcome, e.amount);
-                const isPay = s.dir === "pay"; // player win → green (we owe them)
-                const isCollect = s.dir === "collect"; // player lose → red (they owe us)
-                const cls = isPay ? "pos" : isCollect ? "neg" : "";
-                const amt =
-                  s.dir === "pending"
-                    ? "—"
-                    : s.dir === "even"
-                    ? money(0)
-                    : (isPay ? "+" : "−") + money(s.value);
-                return (
-                  <tr key={e.id}>
-                    <td>{fmtDate(e.created_at)}</td>
-                    <td>{e.name || "—"}</td>
-                    <td className="num">{money(e.amount)}</td>
-                    <td className={cls}>{PRINT_LABEL[e.outcome] || e.outcome}</td>
-                    <td className={cx("num", cls)}>{amt}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          <div className="bk-print-totals">
-            <div>
-              Player won: <span className="pos">+{money(totals.pay)}</span>
-            </div>
-            <div>
-              Player lost: <span className="neg">−{money(totals.collect)}</span>
-            </div>
-            <div className="bk-print-net">
-              {filter}{" "}
-              {pnet === 0 ? (
-                <span>{money(0)}</span>
-              ) : (
-                <span className={pnet > 0 ? "pos" : "neg"}>
-                  {pnet > 0 ? "+" : "−"}
-                  {money(Math.abs(pnet))}
-                </span>
-              )}
-            </div>
-            {totals.pending > 0 && (
-              <div className="bk-print-pending">
-                ({totals.pending} bet{totals.pending === 1 ? "" : "s"} still unsettled)
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1113,33 +1144,6 @@ const CSS = `
 .bk-pdf-btn{border:1px solid var(--brass-dim); background:rgba(203,162,78,.14); color:var(--brass);
   border-radius:8px; padding:5px 11px; font-size:.74rem; font-weight:700; cursor:pointer; font-family:var(--sans);}
 .bk-pdf-btn:hover{border-color:var(--brass); background:rgba(203,162,78,.22);}
-
-/* Printable per-player statement — hidden on screen, shown when printing. */
-.bk-print{display:none;}
-@media print {
-  .bk-wrap, .bk-drawer, .bk-scrim{display:none !important;}
-  html, body, #root{background:#fff !important; height:auto !important;}
-  .bk{background:#fff !important; min-height:0;}
-  .bk-print{display:block !important; color:#15120e; padding:14mm;}
-  .bk-print, .bk-print *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
-  .bk-print-head{border-bottom:1px solid #999; padding-bottom:10px; margin-bottom:16px;}
-  .bk-print-title{font-size:22px; font-weight:800;}
-  .bk-print-sub{font-size:12px; color:#666; margin-top:3px;}
-  .bk-print-table{width:100%; border-collapse:collapse; font-size:12.5px;}
-  .bk-print-table th{text-align:left; border-bottom:1px solid #999; padding:6px 8px;
-    font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:#444;}
-  .bk-print-table td{padding:6px 8px; border-bottom:1px solid #e4e0d6; vertical-align:top;}
-  .bk-print-table .num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
-  .bk-print .pos{color:#1a7f3c !important; font-weight:700;}
-  .bk-print .neg{color:#c0392b !important; font-weight:700;}
-  .bk-print-totals{margin-top:16px; padding-top:12px; border-top:1px solid #999;
-    font-size:13px; line-height:1.7;}
-  .bk-print-net{font-size:16px; font-weight:800; margin-top:6px;}
-  .bk-print-pending{font-size:11px; color:#888; margin-top:4px;}
-  /* margin:0 removes the browser's auto URL/date/page footer; the 14mm padding
-     on .bk-print restores the page margins. */
-  @page{margin:0;}
-}
 
 .bk-select{appearance:none; -webkit-appearance:none; cursor:pointer; padding-right:36px;
   background:var(--panel2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23A89C89' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 13px center;}
