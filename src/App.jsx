@@ -37,6 +37,28 @@ const fmtDate = (iso) => {
   if (isNaN(d.getTime())) return "";
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
 };
+const fmtMD = (d) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
+const fmtDayHead = (d) =>
+  new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(d);
+
+// Start of the week (Monday 00:00) that contains d.
+function mondayOfWeek(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  const dow = (x.getDay() + 6) % 7; // 0 = Monday … 6 = Sunday
+  x.setDate(x.getDate() - dow);
+  return x;
+}
+const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+// Order comparator: by created_at, then id (ids encode submission order). The id
+// tiebreak runs opposite to the time sort so submission order is preserved.
+function cmpEntries(a, b, sort) {
+  const c = (a.created_at || "").localeCompare(b.created_at || "");
+  if (c !== 0) return sort === "new" ? -c : c;
+  const t = (a.id || "").localeCompare(b.id || "");
+  return sort === "new" ? t : -t;
+}
 
 // Returns how a bet settles: direction (collect/pay/pending), dollar value, and if it's a half result.
 function settle(outcome, amount) {
@@ -81,6 +103,8 @@ export default function App() {
   const [showEarnings, setShowEarnings] = useState(false);
   const [showAdd, setShowAdd] = useState(true);
   const [sort, setSort] = useState("new"); // "new" = newest first, "old" = oldest first
+  const [weekOffset, setWeekOffset] = useState(0); // 0 = this week, -1 = last week …
+  const [collapsedDays, setCollapsedDays] = useState(() => new Set());
   const [editId, setEditId] = useState(null); // bet whose note is being edited
   const [editText, setEditText] = useState("");
   const [confirmId, setConfirmId] = useState(null);
@@ -301,19 +325,65 @@ export default function App() {
     [entries, filter]
   );
 
-  // Sort by date. created_at is an ISO string, so string compare matches time order.
-  const sortedEntries = useMemo(() => {
-    const arr = [...visibleEntries];
-    arr.sort((a, b) => {
-      const c = (a.created_at || "").localeCompare(b.created_at || "");
-      if (c !== 0) return sort === "new" ? -c : c;
-      // Deterministic tiebreaker so equal timestamps (e.g. older bulk saves
-      // that all share one created_at) never reshuffle between reloads.
-      const t = (a.id || "").localeCompare(b.id || "");
-      return sort === "new" ? -t : t;
+  // The visible week window [start, end) based on the week switcher offset.
+  const weekStart = useMemo(() => {
+    const m = mondayOfWeek(new Date());
+    m.setDate(m.getDate() + weekOffset * 7);
+    return m;
+  }, [weekOffset]);
+  const weekEnd = useMemo(() => {
+    const e = new Date(weekStart);
+    e.setDate(e.getDate() + 7);
+    return e;
+  }, [weekStart]);
+  const weekLabel = useMemo(() => {
+    const last = new Date(weekEnd);
+    last.setDate(last.getDate() - 1);
+    return `${fmtMD(weekStart)} – ${fmtMD(last)}`;
+  }, [weekStart, weekEnd]);
+
+  // Bets entered in the selected week (after the player filter).
+  const weekEntries = useMemo(() => {
+    const s = weekStart.getTime();
+    const e = weekEnd.getTime();
+    return visibleEntries.filter((x) => {
+      const t = new Date(x.created_at || 0).getTime();
+      return t >= s && t < e;
     });
-    return arr;
-  }, [visibleEntries, sort]);
+  }, [visibleEntries, weekStart, weekEnd]);
+
+  // Group the week's bets by the day they were entered, ordered by the sort toggle.
+  const dayGroups = useMemo(() => {
+    const map = new Map();
+    for (const e of weekEntries) {
+      const d = new Date(e.created_at || 0);
+      const key = dayKey(d);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(e);
+    }
+    const groups = [...map.values()].map((list) => {
+      const items = [...list].sort((a, b) => cmpEntries(a, b, sort));
+      let collect = 0, pay = 0;
+      for (const e of items) {
+        const s = settle(e.outcome, e.amount);
+        if (s.dir === "collect") collect += s.value;
+        else if (s.dir === "pay") pay += s.value;
+      }
+      const d = new Date(items[0].created_at || 0);
+      return { key: dayKey(d), items, net: collect - pay, label: fmtDayHead(d), time: d.getTime() };
+    });
+    groups.sort((a, b) => (sort === "new" ? b.time - a.time : a.time - b.time));
+    return groups;
+  }, [weekEntries, sort]);
+
+  function toggleDay(key) {
+    setCollapsedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const totals = useMemo(() => {
     let collect = 0, pay = 0, pending = 0;
@@ -328,6 +398,117 @@ export default function App() {
 
   const netCls = totals.net > 0 ? "bk-pos" : totals.net < 0 ? "bk-neg" : "bk-zero";
   const netSign = totals.net > 0 ? "+" : "";
+
+  const renderEntry = (e) => {
+    const s = settle(e.outcome, e.amount);
+    const pending = s.dir === "pending";
+    const isCollect = s.dir === "collect";
+    return (
+      <div className={cx("bk-entry", pending && "is-pending")} key={e.id}>
+        <div className="bk-entry-head">
+          <span className={cx("bk-dot", e.outcome)} />
+          <div className="bk-entry-names">
+            {filter ? (
+              // Already filtered to one player — the person name is redundant,
+              // so the match/note becomes the highlighted headline instead.
+              <span className={cx("bk-name bk-name-note", !e.name && "empty")}>
+                {e.name || "No note"}
+              </span>
+            ) : (
+              <>
+                <span className={cx("bk-name", !e.person && "empty")}>
+                  {e.person || "No name"}
+                </span>
+                {e.name && <span className="bk-note">{e.name}</span>}
+              </>
+            )}
+          </div>
+          {confirmId === e.id ? (
+            <div className="bk-confirm">
+              <button className="bk-confirm-yes" onClick={() => remove(e.id)}>delete</button>
+              <button className="bk-confirm-no" onClick={() => setConfirmId(null)}>keep</button>
+            </div>
+          ) : (
+            <div className="bk-entry-tools">
+              <button className="bk-edit" onClick={() => startEdit(e)} aria-label="Edit note">
+                ✎
+              </button>
+              <button
+                className="bk-del"
+                onClick={() => setConfirmId(e.id)}
+                aria-label="Delete entry"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+        </div>
+
+        {editId === e.id && (
+          <form
+            className="bk-edit-row"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              saveNote();
+            }}
+          >
+            <input
+              className="bk-input"
+              placeholder="Note / match"
+              value={editText}
+              onChange={(ev) => setEditText(ev.target.value)}
+              autoFocus
+            />
+            <button className="bk-edit-save" type="submit">Save</button>
+            <button className="bk-edit-cancel" type="button" onClick={() => setEditId(null)}>
+              Cancel
+            </button>
+          </form>
+        )}
+
+        <div className="bk-entry-meta">
+          <span className="bk-entry-sub mono">
+            bet {money(e.amount)}
+            {fmtDate(e.created_at) && (
+              <span className="bk-entry-date"> · {fmtDate(e.created_at)}</span>
+            )}
+          </span>
+          {pending ? (
+            <span className="bk-entry-net bk-pending mono">
+              —<span className="bk-tag">not settled</span>
+            </span>
+          ) : s.dir === "even" ? (
+            <span className="bk-entry-net bk-even mono">
+              {money(0)}
+              <span className="bk-tag">even</span>
+            </span>
+          ) : (
+            // Color follows player win/lose, not money direction: a Win
+            // pays out (collect=false) yet shows green so it reads as a win.
+            <span className={cx("bk-entry-net mono", isCollect ? "bk-neg" : "bk-pos")}>
+              {money(s.value)}
+              <span className="bk-tag">
+                {s.dir}
+                {s.half ? " ½" : ""}
+              </span>
+            </span>
+          )}
+        </div>
+
+        <div className="bk-outcomes">
+          {OUTCOMES.map((o) => (
+            <button
+              key={o.key}
+              className={cx(e.outcome === o.key && `on-${o.tone}`)}
+              onClick={() => setOutcome(e.id, o.key)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="bk">
@@ -660,17 +841,42 @@ export default function App() {
 
         {/* Lines */}
         <section>
-          {loaded && visibleEntries.length === 0 && (
-            <div className="bk-empty">
-              {filter
-                ? `No bets for ${filter}.`
-                : "No bets yet. Add one above to start the book."}
-            </div>
-          )}
-          {sortedEntries.length > 0 && (
+          {/* Week switcher */}
+          <div className="bk-week">
+            <button
+              className="bk-week-nav"
+              onClick={() => setWeekOffset((w) => w - 1)}
+              aria-label="Previous week"
+            >
+              ‹
+            </button>
+            <button
+              className="bk-week-label"
+              onClick={() => setWeekOffset(0)}
+              title="Jump to this week"
+            >
+              <span className="bk-week-range">{weekLabel}</span>
+              <span className="bk-week-sub">
+                {weekOffset === 0
+                  ? "this week"
+                  : weekOffset === -1
+                  ? "last week"
+                  : `${weekOffset > 0 ? "+" : ""}${weekOffset} weeks`}
+              </span>
+            </button>
+            <button
+              className="bk-week-nav"
+              onClick={() => setWeekOffset((w) => w + 1)}
+              aria-label="Next week"
+            >
+              ›
+            </button>
+          </div>
+
+          {weekEntries.length > 0 && (
             <div className="bk-list-head">
               <span className="bk-list-count">
-                {sortedEntries.length} {sortedEntries.length === 1 ? "bet" : "bets"}
+                {weekEntries.length} {weekEntries.length === 1 ? "bet" : "bets"} this week
               </span>
               <div className="bk-sort" role="group" aria-label="Sort by date">
                 <button className={cx(sort === "new" && "on")} onClick={() => setSort("new")}>
@@ -682,121 +888,39 @@ export default function App() {
               </div>
             </div>
           )}
-          {sortedEntries.map((e) => {
-            const s = settle(e.outcome, e.amount);
-            const pending = s.dir === "pending";
-            const isCollect = s.dir === "collect";
+
+          {loaded && weekEntries.length === 0 && (
+            <div className="bk-empty">
+              {filter ? `No bets for ${filter} this week.` : "No bets entered this week."}
+            </div>
+          )}
+          {dayGroups.map((g) => {
+            const collapsed = collapsedDays.has(g.key);
             return (
-              <div className={cx("bk-entry", pending && "is-pending")} key={e.id}>
-                <div className="bk-entry-head">
-                  <span className={cx("bk-dot", e.outcome)} />
-                  <div className="bk-entry-names">
-                    {filter ? (
-                      // Already filtered to one player — the person name is redundant,
-                      // so the match/note becomes the highlighted headline instead.
-                      <span className={cx("bk-name bk-name-note", !e.name && "empty")}>
-                        {e.name || "No note"}
-                      </span>
-                    ) : (
-                      <>
-                        <span className={cx("bk-name", !e.person && "empty")}>
-                          {e.person || "No name"}
-                        </span>
-                        {e.name && <span className="bk-note">{e.name}</span>}
-                      </>
-                    )}
-                  </div>
-                  {confirmId === e.id ? (
-                    <div className="bk-confirm">
-                      <button className="bk-confirm-yes" onClick={() => remove(e.id)}>delete</button>
-                      <button className="bk-confirm-no" onClick={() => setConfirmId(null)}>keep</button>
-                    </div>
-                  ) : (
-                    <div className="bk-entry-tools">
-                      <button
-                        className="bk-edit"
-                        onClick={() => startEdit(e)}
-                        aria-label="Edit note"
-                      >
-                        ✎
-                      </button>
-                      <button
-                        className="bk-del"
-                        onClick={() => setConfirmId(e.id)}
-                        aria-label="Delete entry"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {editId === e.id && (
-                  <form
-                    className="bk-edit-row"
-                    onSubmit={(ev) => {
-                      ev.preventDefault();
-                      saveNote();
-                    }}
-                  >
-                    <input
-                      className="bk-input"
-                      placeholder="Note / match"
-                      value={editText}
-                      onChange={(ev) => setEditText(ev.target.value)}
-                      autoFocus
-                    />
-                    <button className="bk-edit-save" type="submit">Save</button>
-                    <button
-                      className="bk-edit-cancel"
-                      type="button"
-                      onClick={() => setEditId(null)}
+              <div className="bk-day" key={g.key}>
+                <button
+                  className="bk-day-head"
+                  onClick={() => toggleDay(g.key)}
+                  aria-expanded={!collapsed}
+                >
+                  <span className="bk-day-date">{g.label}</span>
+                  <span className="bk-day-meta">
+                    <span className="bk-day-count">
+                      {g.items.length} {g.items.length === 1 ? "bet" : "bets"}
+                    </span>
+                    <span
+                      className={cx(
+                        "mono bk-day-net",
+                        g.net > 0 ? "bk-pos" : g.net < 0 ? "bk-neg" : "bk-zero"
+                      )}
                     >
-                      Cancel
-                    </button>
-                  </form>
-                )}
-
-                <div className="bk-entry-meta">
-                  <span className="bk-entry-sub mono">
-                    bet {money(e.amount)}
-                    {fmtDate(e.created_at) && (
-                      <span className="bk-entry-date"> · {fmtDate(e.created_at)}</span>
-                    )}
+                      {g.net > 0 ? "+" : ""}
+                      {money(Math.abs(g.net))}
+                    </span>
+                    <span className="bk-chev">{collapsed ? "▸" : "▾"}</span>
                   </span>
-                  {pending ? (
-                    <span className="bk-entry-net bk-pending mono">
-                      —<span className="bk-tag">not settled</span>
-                    </span>
-                  ) : s.dir === "even" ? (
-                    <span className="bk-entry-net bk-even mono">
-                      {money(0)}
-                      <span className="bk-tag">even</span>
-                    </span>
-                  ) : (
-                    // Color follows player win/lose, not money direction: a Win
-                    // pays out (collect=false) yet shows green so it reads as a win.
-                    <span className={cx("bk-entry-net mono", isCollect ? "bk-neg" : "bk-pos")}>
-                      {money(s.value)}
-                      <span className="bk-tag">
-                        {s.dir}
-                        {s.half ? " ½" : ""}
-                      </span>
-                    </span>
-                  )}
-                </div>
-
-                <div className="bk-outcomes">
-                  {OUTCOMES.map((o) => (
-                    <button
-                      key={o.key}
-                      className={cx(e.outcome === o.key && `on-${o.tone}`)}
-                      onClick={() => setOutcome(e.id, o.key)}
-                    >
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
+                </button>
+                {!collapsed && <div className="bk-day-body">{g.items.map(renderEntry)}</div>}
               </div>
             );
           })}
@@ -981,6 +1105,28 @@ const CSS = `
 .bk-sort button:hover{color:var(--ink);}
 .bk-sort button.on{background:rgba(203,162,78,.16); color:var(--brass);}
 .bk-entry-date{color:var(--faint);}
+
+/* Week switcher */
+.bk-week{display:flex; align-items:center; gap:8px; margin:6px 0 14px;}
+.bk-week-nav{width:38px; height:42px; flex-shrink:0; border:1px solid var(--line2); border-radius:10px;
+  background:var(--panel2); color:var(--dim); font-size:1.25rem; line-height:1; cursor:pointer; transition:all .13s;}
+.bk-week-nav:hover{color:var(--brass); border-color:var(--brass-dim);}
+.bk-week-label{flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:1px;
+  border:1px solid var(--line); border-radius:10px; background:var(--panel); padding:6px 10px;
+  cursor:pointer; font-family:var(--sans); transition:border-color .13s;}
+.bk-week-label:hover{border-color:var(--line2);}
+.bk-week-range{font-size:.9rem; font-weight:700; color:var(--ink); letter-spacing:.01em;}
+.bk-week-sub{font-size:.58rem; text-transform:uppercase; letter-spacing:.14em; color:var(--faint);}
+
+/* Day groups */
+.bk-day{margin-bottom:14px;}
+.bk-day-head{width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px;
+  background:transparent; border:none; border-bottom:1px solid var(--line2); padding:6px 2px 8px;
+  cursor:pointer; font-family:var(--sans); margin-bottom:10px;}
+.bk-day-date{font-size:.76rem; font-weight:700; color:var(--brass); letter-spacing:.04em; text-transform:uppercase;}
+.bk-day-meta{display:flex; align-items:center; gap:11px;}
+.bk-day-count{font-size:.64rem; text-transform:uppercase; letter-spacing:.1em; color:var(--faint);}
+.bk-day-net{font-size:.9rem; font-weight:600;}
 
 /* Bet card */
 .bk-entry{border:1px solid var(--line); border-radius:14px; background:var(--panel);
