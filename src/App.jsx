@@ -169,15 +169,18 @@ export default function App() {
     if (valid.length === 0) return;
     const p = personName;
     if (person === NEW_PLAYER && p) addPlayer(p);
-    const stamp = Date.now().toString(36);
-    const now = new Date().toISOString();
+    const base = Date.now();
+    const stamp = base.toString(36);
     const created = valid.map((r, i) => ({
       id: stamp + i.toString(36) + Math.random().toString(36).slice(2, 5),
       person: p,
       name: r.note.trim(),
       amount: (parseFloat(r.amount) || 0) * r.mult,
       outcome: "pending",
-      created_at: now,
+      // Stagger by 1ms per row so each bet has a distinct, ordered timestamp.
+      // Identical created_at values let the DB return ties in random order on
+      // reload (the "shuffle"). Row 0 stays the newest, so it sits on top.
+      created_at: new Date(base - i).toISOString(),
     }));
     setEntries((prev) => [...created, ...prev]); // optimistic
     setPerson("");
@@ -227,7 +230,11 @@ export default function App() {
     const arr = [...visibleEntries];
     arr.sort((a, b) => {
       const c = (a.created_at || "").localeCompare(b.created_at || "");
-      return sort === "new" ? -c : c;
+      if (c !== 0) return sort === "new" ? -c : c;
+      // Deterministic tiebreaker so equal timestamps (e.g. older bulk saves
+      // that all share one created_at) never reshuffle between reloads.
+      const t = (a.id || "").localeCompare(b.id || "");
+      return sort === "new" ? -t : t;
     });
     return arr;
   }, [visibleEntries, sort]);
