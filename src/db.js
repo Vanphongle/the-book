@@ -65,12 +65,13 @@ export async function insertBet(entry) {
   if (error) throw error;
 }
 
-export async function updateBetNote(id, name) {
+// Update arbitrary fields of a bet (e.g. { name, amount }).
+export async function updateBet(id, fields) {
   if (!isSupabaseConfigured) {
-    lsWrite(lsRead().map((e) => (e.id === id ? { ...e, name } : e)));
+    lsWrite(lsRead().map((e) => (e.id === id ? { ...e, ...fields } : e)));
     return;
   }
-  const { error } = await supabase.from(TABLE).update({ name }).eq("id", id);
+  const { error } = await supabase.from(TABLE).update(fields).eq("id", id);
   if (error) throw error;
 }
 

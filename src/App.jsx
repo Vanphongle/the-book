@@ -3,7 +3,7 @@ import {
   fetchBets,
   insertBet,
   updateBetOutcome,
-  updateBetNote,
+  updateBet,
   deleteBet,
   clearBets,
   fetchPlayers,
@@ -105,8 +105,9 @@ export default function App() {
   const [sort, setSort] = useState("new"); // "new" = newest first, "old" = oldest first
   const [weekOffset, setWeekOffset] = useState(0); // 0 = this week, -1 = last week …
   const [collapsedDays, setCollapsedDays] = useState(() => new Set());
-  const [editId, setEditId] = useState(null); // bet whose note is being edited
+  const [editId, setEditId] = useState(null); // bet being edited (note + amount)
   const [editText, setEditText] = useState("");
+  const [editAmount, setEditAmount] = useState("");
   const [confirmId, setConfirmId] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -288,14 +289,19 @@ export default function App() {
   function startEdit(e) {
     setEditId(e.id);
     setEditText(e.name || "");
+    setEditAmount(String(e.amount));
   }
-  function saveNote() {
+  function saveEdit() {
     const id = editId;
     const name = editText.trim();
-    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, name } : e)));
+    const parsed = parseFloat(editAmount);
+    const fields = { name };
+    // Only change the amount if a valid positive number was entered.
+    if (parsed > 0) fields.amount = parsed;
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...fields } : e)));
     setEditId(null);
-    updateBetNote(id, name).catch((err) => {
-      setErr("Failed to update the note.");
+    updateBet(id, fields).catch((err) => {
+      setErr("Failed to update the bet.");
       console.error(err);
       resync();
     });
@@ -449,7 +455,7 @@ export default function App() {
             className="bk-edit-row"
             onSubmit={(ev) => {
               ev.preventDefault();
-              saveNote();
+              saveEdit();
             }}
           >
             <input
@@ -459,10 +465,23 @@ export default function App() {
               onChange={(ev) => setEditText(ev.target.value)}
               autoFocus
             />
-            <button className="bk-edit-save" type="submit">Save</button>
-            <button className="bk-edit-cancel" type="button" onClick={() => setEditId(null)}>
-              Cancel
-            </button>
+            <div className="bk-edit-line2">
+              <div className="bk-edit-money">
+                <span className="bk-edit-prefix">$</span>
+                <input
+                  className="bk-input mono bk-edit-amt"
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={editAmount}
+                  onChange={(ev) => setEditAmount(ev.target.value)}
+                  aria-label="Bet amount"
+                />
+              </div>
+              <button className="bk-edit-save" type="submit">Save</button>
+              <button className="bk-edit-cancel" type="button" onClick={() => setEditId(null)}>
+                Cancel
+              </button>
+            </div>
           </form>
         )}
 
@@ -1171,11 +1190,16 @@ const CSS = `
 .bk-edit{width:30px; height:30px; flex-shrink:0; border:1px solid var(--line2); border-radius:8px; background:transparent;
   color:var(--faint); cursor:pointer; font-size:.82rem; line-height:1; transition:all .15s;}
 .bk-edit:hover{color:var(--brass); border-color:var(--brass-dim);}
-.bk-edit-row{display:flex; gap:6px; margin:11px 0 2px;}
-.bk-edit-row .bk-input{flex:1; min-width:0;}
-.bk-edit-save{flex-shrink:0; padding:0 13px; border:1px solid var(--brass); border-radius:8px;
+.bk-edit-row{display:flex; flex-direction:column; gap:7px; margin:11px 0 2px;}
+.bk-edit-row .bk-input{width:100%; min-width:0;}
+.bk-edit-line2{display:flex; gap:6px; align-items:stretch;}
+.bk-edit-money{position:relative; flex:1; min-width:0;}
+.bk-edit-prefix{position:absolute; left:11px; top:50%; transform:translateY(-50%);
+  color:var(--dim); font-family:var(--mono); pointer-events:none;}
+.bk-edit-money .bk-edit-amt{padding-left:24px;}
+.bk-edit-save{flex-shrink:0; padding:0 14px; border:1px solid var(--brass); border-radius:8px;
   background:rgba(203,162,78,.16); color:var(--brass); font-weight:700; font-size:.78rem; cursor:pointer; font-family:var(--sans);}
-.bk-edit-cancel{flex-shrink:0; padding:0 13px; border:1px solid var(--line2); border-radius:8px;
+.bk-edit-cancel{flex-shrink:0; padding:0 14px; border:1px solid var(--line2); border-radius:8px;
   background:transparent; color:var(--dim); font-size:.78rem; cursor:pointer; font-family:var(--sans);}
 .bk-confirm{display:flex; gap:5px; flex-shrink:0;}
 .bk-confirm button{padding:6px 10px; border-radius:7px; font-size:.68rem; font-weight:700; cursor:pointer;
