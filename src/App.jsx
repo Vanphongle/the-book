@@ -420,6 +420,8 @@ export default function App() {
 
   const netCls = totals.net > 0 ? "bk-pos" : totals.net < 0 ? "bk-neg" : "bk-zero";
   const netSign = totals.net > 0 ? "+" : "";
+  // Player's signed balance: + means we owe the player, − means they owe us.
+  const pnet = totals.pay - totals.collect;
 
   const renderEntry = (e) => {
     const s = settle(e.outcome, e.amount);
@@ -1020,16 +1022,14 @@ export default function App() {
               Player lost: <span className="neg">−{money(totals.collect)}</span>
             </div>
             <div className="bk-print-net">
-              {totals.net > 0 ? (
-                <>
-                  {filter} owes: <span className="neg">{money(totals.net)}</span>
-                </>
-              ) : totals.net < 0 ? (
-                <>
-                  Owed to {filter}: <span className="pos">{money(-totals.net)}</span>
-                </>
+              {filter}{" "}
+              {pnet === 0 ? (
+                <span>{money(0)}</span>
               ) : (
-                <>Settled — $0.00</>
+                <span className={pnet > 0 ? "pos" : "neg"}>
+                  {pnet > 0 ? "+" : "−"}
+                  {money(Math.abs(pnet))}
+                </span>
               )}
             </div>
             {totals.pending > 0 && (
@@ -1118,8 +1118,9 @@ const CSS = `
 .bk-print{display:none;}
 @media print {
   .bk-wrap, .bk-drawer, .bk-scrim{display:none !important;}
+  html, body, #root{background:#fff !important; height:auto !important;}
   .bk{background:#fff !important; min-height:0;}
-  .bk-print{display:block !important; color:#15120e;}
+  .bk-print{display:block !important; color:#15120e; padding:14mm;}
   .bk-print, .bk-print *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
   .bk-print-head{border-bottom:1px solid #999; padding-bottom:10px; margin-bottom:16px;}
   .bk-print-title{font-size:22px; font-weight:800;}
@@ -1135,7 +1136,9 @@ const CSS = `
     font-size:13px; line-height:1.7;}
   .bk-print-net{font-size:16px; font-weight:800; margin-top:6px;}
   .bk-print-pending{font-size:11px; color:#888; margin-top:4px;}
-  @page{margin:14mm;}
+  /* margin:0 removes the browser's auto URL/date/page footer; the 14mm padding
+     on .bk-print restores the page margins. */
+  @page{margin:0;}
 }
 
 .bk-select{appearance:none; -webkit-appearance:none; cursor:pointer; padding-right:36px;
