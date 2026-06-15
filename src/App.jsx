@@ -51,6 +51,13 @@ const keyToDate = (k) => {
   return new Date(y, m - 1, d);
 };
 const todayKey = () => dateToKey(new Date());
+// Monday (week start) key for a given day key.
+const mondayKey = (dk) => {
+  const d = keyToDate(dk);
+  const dow = (d.getDay() + 6) % 7; // 0 = Monday … 6 = Sunday
+  d.setDate(d.getDate() - dow);
+  return dateToKey(d);
+};
 // The day a bet is filed under: its chosen bet_date, else the entry date.
 const betDayKey = (e) => e.bet_date || dateToKey(new Date(e.created_at || 0));
 
@@ -118,7 +125,8 @@ export default function App() {
   const [showAdd, setShowAdd] = useState(true);
   const [sort, setSort] = useState("new"); // "new" = newest first, "old" = oldest first
   const [periods, setPeriods] = useState([]); // settle events (id, started_at)
-  const [dayIndex, setDayIndex] = useState(0); // which bet-day is viewed (0 = newest)
+  const [viewMode, setViewMode] = useState("day"); // "day" | "week" (tap the switcher center)
+  const [dayIndex, setDayIndex] = useState(0); // which unit (day/week) is viewed (0 = newest)
   const [selectedDays, setSelectedDays] = useState(() => new Set()); // days ticked to settle
   const [editId, setEditId] = useState(null); // bet being edited (note + amount + day)
   const [editText, setEditText] = useState("");
@@ -175,6 +183,7 @@ export default function App() {
   // don't have to pick the same person again, and start at their newest day.
   useEffect(() => {
     setDayIndex(0);
+    setSelectedDays(new Set()); // settle selection is per-context
     if (filter) {
       setPerson(filter);
       setNewPlayer("");
@@ -444,7 +453,10 @@ export default function App() {
   // Settle the ticked days in bulk: create a settle period and stamp period_id on
   // every OPEN bet whose day is selected. Nothing is deleted; days just close.
   function settleSelectedDays() {
-    const ids = openEntries.filter((e) => selectedDays.has(betDayKey(e))).map((e) => e.id);
+    // Global when viewing all players; just this player's bets when filtered.
+    const ids = openEntries
+      .filter((e) => selectedDays.has(betDayKey(e)) && (!filter || e.person === filter))
+      .map((e) => e.id);
     if (!ids.length) return;
     const p = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -464,14 +476,6 @@ export default function App() {
       });
   }
 
-  function toggleDaySelect(key) {
-    setSelectedDays((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
 
   // Open (unsettled) bets, before the player filter — settling is global.
   const openEntries = useMemo(() => entries.filter((e) => !e.period_id), [entries]);
@@ -489,37 +493,70 @@ export default function App() {
     [entries, filter]
   );
 
-  // Distinct bet-days present, newest first — the switcher steps through these.
-  const allDays = useMemo(() => {
-    const set = new Set(visibleEntries.map((e) => betDayKey(e)));
+  // Group key under the current view mode: the bet's day, or its week's Monday.
+  const unitKeyOf = (e) => (viewMode === "week" ? mondayKey(betDayKey(e)) : betDayKey(e));
+
+  // Distinct units (days or weeks) present, newest first — the switcher steps through these.
+  const units = useMemo(() => {
+    const set = new Set(visibleEntries.map(unitKeyOf));
     return [...set].sort().reverse();
-  }, [visibleEntries]);
+  }, [visibleEntries, viewMode]);
 
-  const dayIdx = Math.min(Math.max(dayIndex, 0), Math.max(allDays.length - 1, 0));
-  const viewedDay = allDays[dayIdx] || "";
+  const unitIdx = Math.min(Math.max(dayIndex, 0), Math.max(units.length - 1, 0));
+  const viewedUnit = units[unitIdx] || "";
 
-  // Bets on the viewed day (after the player filter), ordered by the sort toggle.
+  // Bets in the viewed unit (after the player filter), ordered by the sort toggle.
   const periodEntries = useMemo(
     () =>
       visibleEntries
-        .filter((e) => betDayKey(e) === viewedDay)
+        .filter((e) => unitKeyOf(e) === viewedUnit)
         .sort((a, b) => cmpEntries(a, b, sort)),
-    [visibleEntries, viewedDay, sort]
+    [visibleEntries, viewedUnit, viewMode, sort]
   );
 
-  // Status of the viewed day across ALL bets (settling is global, not per player).
+  // Sub-group the unit's bets by day (one group in day view, several in week view).
+  const dayGroups = useMemo(() => {
+    const map = new Map();
+    for (const e of periodEntries) {
+      const k = betDayKey(e);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(e);
+    }
+    return [...map.entries()].map(([key, items]) => {
+      let collect = 0, pay = 0;
+      for (const e of items) {
+        const s = settle(e.outcome, e.amount);
+        if (s.dir === "collect") collect += s.value;
+        else if (s.dir === "pay") pay += s.value;
+      }
+      return { key, items, net: collect - pay, label: fmtDayHead(keyToDate(key)) };
+    });
+  }, [periodEntries]);
+
+  // Status of the viewed unit, within the current view (global, or this player).
   const dayInfo = useMemo(() => {
-    const all = entries.filter((e) => betDayKey(e) === viewedDay);
-    const open = all.filter((e) => !e.period_id);
-    const settledBet = all.find((e) => e.period_id);
+    const open = periodEntries.filter((e) => !e.period_id);
+    const settledBet = periodEntries.find((e) => e.period_id);
     const settledOn = settledBet ? periodTime.get(settledBet.period_id) : null;
+    let label = "No bets yet";
+    if (viewedUnit) {
+      if (viewMode === "week") {
+        const start = keyToDate(viewedUnit);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 6);
+        label = `${fmtMD(start)} – ${fmtMD(end)}`;
+      } else {
+        label = fmtDayHead(keyToDate(viewedUnit));
+      }
+    }
     return {
-      label: viewedDay ? fmtDayHead(keyToDate(viewedDay)) : "No bets yet",
+      label,
       openCount: open.length,
-      settledCount: all.length - open.length,
+      settledCount: periodEntries.length - open.length,
       settledOn: settledOn ? fmtMD(new Date(settledOn)) : "",
+      openDays: [...new Set(open.map(betDayKey))],
     };
-  }, [entries, viewedDay, periodTime]);
+  }, [periodEntries, viewedUnit, viewMode, periodTime]);
 
   const periodLabel = dayInfo.label;
   const periodSub =
@@ -530,6 +567,18 @@ export default function App() {
         ? `settled ${dayInfo.settledOn}`
         : "settled"
       : "open";
+
+  // Whether the whole viewed unit's open bets are ticked for settling.
+  const unitPicked =
+    dayInfo.openDays.length > 0 && dayInfo.openDays.every((d) => selectedDays.has(d));
+  function toggleUnitSettle() {
+    setSelectedDays((prev) => {
+      const next = new Set(prev);
+      if (unitPicked) dayInfo.openDays.forEach((d) => next.delete(d));
+      else dayInfo.openDays.forEach((d) => next.add(d));
+      return next;
+    });
+  }
 
   // Totals scope to the viewed day.
   const totals = useMemo(() => {
@@ -1034,45 +1083,51 @@ export default function App() {
 
         {/* Lines */}
         <section>
-          {/* Day switcher — one bet-day at a time, newest first */}
+          {/* Day / week switcher — tap the centre to toggle the unit */}
           <div className="bk-week">
             <button
               className="bk-week-nav"
-              onClick={() => setDayIndex(Math.min(dayIdx + 1, allDays.length - 1))}
-              disabled={dayIdx >= allDays.length - 1}
-              aria-label="Older day"
+              onClick={() => setDayIndex(Math.min(unitIdx + 1, units.length - 1))}
+              disabled={unitIdx >= units.length - 1}
+              aria-label={`Older ${viewMode}`}
             >
               ‹
             </button>
             <button
               className="bk-week-label"
-              onClick={() => setDayIndex(0)}
-              title="Jump to the latest day"
+              onClick={() => {
+                setViewMode((m) => (m === "day" ? "week" : "day"));
+                setDayIndex(0);
+              }}
+              title="Tap to switch day / week"
             >
               <span className="bk-week-range">{periodLabel}</span>
-              <span className="bk-week-sub">{periodSub}</span>
+              <span className="bk-week-sub">
+                {periodSub} · {viewMode} view ⇄
+              </span>
             </button>
             <button
               className="bk-week-nav"
-              onClick={() => setDayIndex(Math.max(dayIdx - 1, 0))}
-              disabled={dayIdx <= 0}
-              aria-label="Newer day"
+              onClick={() => setDayIndex(Math.max(unitIdx - 1, 0))}
+              disabled={unitIdx <= 0}
+              aria-label={`Newer ${viewMode}`}
             >
               ›
             </button>
           </div>
 
-          {/* Settle this day (only when not filtered and the day has open bets) */}
-          {!filter && dayInfo.openCount > 0 && (
+          {/* Settle this day / week (settles open bets — this player when filtered) */}
+          {dayInfo.openCount > 0 && (
             <label className="bk-settle-day">
               <input
                 type="checkbox"
                 className="bk-day-check"
-                checked={selectedDays.has(viewedDay)}
-                onChange={() => toggleDaySelect(viewedDay)}
+                checked={unitPicked}
+                onChange={toggleUnitSettle}
               />
               <span className="bk-settle-day-txt">
-                Settle this day
+                Settle this {viewMode}
+                {filter ? ` for ${filter}` : ""}
                 {dayInfo.settledCount > 0 && " (open bets)"}
               </span>
             </label>
@@ -1108,14 +1163,38 @@ export default function App() {
             </div>
           )}
 
-          <div className="bk-day-body">{periodEntries.map(renderEntry)}</div>
+          {dayGroups.map((g) => (
+            <div className="bk-day" key={g.key}>
+              {viewMode === "week" && (
+                <div className="bk-day-head bk-day-head-static">
+                  <span className="bk-day-date">{g.label}</span>
+                  <span className="bk-day-meta">
+                    <span className="bk-day-count">
+                      {g.items.length} {g.items.length === 1 ? "bet" : "bets"}
+                    </span>
+                    <span
+                      className={cx(
+                        "mono bk-day-net",
+                        g.net > 0 ? "bk-pos" : g.net < 0 ? "bk-neg" : "bk-zero"
+                      )}
+                    >
+                      {g.net > 0 ? "+" : ""}
+                      {money(Math.abs(g.net))}
+                    </span>
+                  </span>
+                </div>
+              )}
+              <div className="bk-day-body">{g.items.map(renderEntry)}</div>
+            </div>
+          ))}
         </section>
       </div>
 
-      {!filter && selectedDays.size > 0 && (
+      {selectedDays.size > 0 && (
         <div className="bk-settle-bar">
           <span className="bk-settle-count">
-            {selectedDays.size} day{selectedDays.size === 1 ? "" : "s"} selected
+            {filter ? `${filter} · ` : ""}
+            {selectedDays.size} day{selectedDays.size === 1 ? "" : "s"} to settle
           </span>
           <span className="bk-settle-actions">
             <button className="bk-settle-clear" onClick={() => setSelectedDays(new Set())}>
@@ -1207,6 +1286,7 @@ const CSS = `
   border:1px solid var(--brass-dim); border-radius:11px; background:rgba(203,162,78,.08); cursor:pointer;}
 .bk-settle-day-txt{font-size:.84rem; color:var(--brass); font-weight:600;}
 .bk-list-net{font-weight:600;}
+.bk-day-head-static{cursor:default;}
 
 .bk-settle-bar{position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:35;
   display:flex; align-items:center; gap:16px; max-width:520px; width:calc(100% - 36px);
