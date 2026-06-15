@@ -8,7 +8,7 @@ create table if not exists public.bets (
   person     text not null default '',    -- who pays / collects (the headline)
   name       text default '',             -- note / match info (secondary line)
   amount     numeric not null,            -- already multiplied by 100
-  outcome    text not null check (outcome in ('win', 'halfwin', 'halflose', 'lose', 'pending')),
+  outcome    text not null check (outcome in ('win', 'halfwin', 'halflose', 'lose', 'pending', 'push')),
   created_at timestamptz not null default now()
 );
 

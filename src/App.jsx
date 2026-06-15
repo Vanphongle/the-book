@@ -16,6 +16,7 @@ const NEW_PLAYER = "__new__";
 //   HALF WIN  → pay half of the 90%  (= 45% of the bet)
 //   HALF LOSE → collect half the bet amount
 //   LOSE      → collect the full bet amount
+//   PUSH (=)  → a draw: no win or lose, settles to $0
 //   PENDING   → saved but not settled yet (counts for nothing until you pick)
 // Typed amount is multiplied by the chosen ×1 / ×10 / ×100 at save time.
 // Each bet line is saved to Supabase (see src/db.js).
@@ -44,19 +45,18 @@ function settle(outcome, amount) {
       return { dir: "collect", value: amount * 0.5, half: true };
     case "lose":
       return { dir: "collect", value: amount, half: false };
+    case "push":
+      return { dir: "even", value: 0, half: false };
     case "pending":
     default:
       return { dir: "pending", value: 0, half: false };
   }
 }
 
-// Display-only relabel: the UI shows the words "collect"/"pay" swapped, while the
-// colors stay tied to the settlement direction (collect = green, pay = red).
-const DIR_LABEL = { collect: "pay", pay: "collect" };
-
 const OUTCOMES = [
   { key: "win", label: "Win", tone: "win" },
   { key: "halfwin", label: "½ Win", tone: "win" },
+  { key: "push", label: "=", tone: "even" },
   { key: "halflose", label: "½ Lose", tone: "lose" },
   { key: "lose", label: "Lose", tone: "lose" },
 ];
@@ -238,7 +238,7 @@ export default function App() {
       const s = settle(e.outcome, e.amount);
       if (s.dir === "collect") collect += s.value;
       else if (s.dir === "pay") pay += s.value;
-      else pending += 1;
+      else if (s.dir === "pending") pending += 1;
     }
     return { collect, pay, net: collect - pay, count: visibleEntries.length, pending };
   }, [visibleEntries]);
@@ -384,15 +384,15 @@ export default function App() {
                 {netSign}
                 {money(Math.abs(totals.net))}
               </div>
-              <div className="bk-net-label">net — pay minus collect</div>
+              <div className="bk-net-label">net — collect minus pay</div>
               <div className="bk-subgrid">
                 <div>
-                  <span className="v" style={{ color: "var(--win)" }}>{money(totals.collect)}</span>
-                  <span className="k">to pay</span>
+                  <span className="v" style={{ color: "var(--win)" }}>+{money(totals.collect)}</span>
+                  <span className="k">to collect</span>
                 </div>
                 <div>
-                  <span className="v" style={{ color: "var(--lose)" }}>+{money(totals.pay)}</span>
-                  <span className="k">to collect</span>
+                  <span className="v" style={{ color: "var(--lose)" }}>{money(totals.pay)}</span>
+                  <span className="k">to pay</span>
                 </div>
                 <div>
                   <span className="v">{totals.count}</span>
@@ -552,10 +552,20 @@ export default function App() {
                 <div className="bk-entry-head">
                   <span className={cx("bk-dot", e.outcome)} />
                   <div className="bk-entry-names">
-                    <span className={cx("bk-name", !e.person && "empty")}>
-                      {e.person || "No name"}
-                    </span>
-                    {e.name && <span className="bk-note">{e.name}</span>}
+                    {filter ? (
+                      // Already filtered to one player — the person name is redundant,
+                      // so the match/note becomes the highlighted headline instead.
+                      <span className={cx("bk-name bk-name-note", !e.name && "empty")}>
+                        {e.name || "No note"}
+                      </span>
+                    ) : (
+                      <>
+                        <span className={cx("bk-name", !e.person && "empty")}>
+                          {e.person || "No name"}
+                        </span>
+                        {e.name && <span className="bk-note">{e.name}</span>}
+                      </>
+                    )}
                   </div>
                   {confirmId === e.id ? (
                     <div className="bk-confirm">
@@ -584,11 +594,16 @@ export default function App() {
                     <span className="bk-entry-net bk-pending mono">
                       —<span className="bk-tag">not settled</span>
                     </span>
+                  ) : s.dir === "even" ? (
+                    <span className="bk-entry-net bk-even mono">
+                      {money(0)}
+                      <span className="bk-tag">even</span>
+                    </span>
                   ) : (
                     <span className={cx("bk-entry-net mono", isCollect ? "bk-pos" : "bk-neg")}>
                       {money(s.value)}
                       <span className="bk-tag">
-                        {DIR_LABEL[s.dir]}
+                        {s.dir}
                         {s.half ? " ½" : ""}
                       </span>
                     </span>
@@ -599,9 +614,7 @@ export default function App() {
                   {OUTCOMES.map((o) => (
                     <button
                       key={o.key}
-                      className={cx(
-                        e.outcome === o.key && (o.tone === "win" ? "on-win" : "on-lose")
-                      )}
+                      className={cx(e.outcome === o.key && `on-${o.tone}`)}
                       onClick={() => setOutcome(e.id, o.key)}
                     >
                       {o.label}
@@ -786,10 +799,12 @@ const CSS = `
 .bk-dot.lose{background:var(--lose);}
 .bk-dot.halfwin{border:2px solid var(--win);}
 .bk-dot.halflose{border:2px solid var(--lose);}
+.bk-dot.push{background:var(--dim);}
 .bk-dot.pending{border:2px solid var(--brass-dim);}
 .bk-entry-names{flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;}
 .bk-name{font-size:.98rem; color:var(--ink); overflow-wrap:anywhere; font-weight:600; line-height:1.35;}
 .bk-name.empty{color:var(--faint); font-weight:400;}
+.bk-name-note{color:var(--brass);}
 .bk-note{font-size:.8rem; color:var(--dim); overflow-wrap:anywhere; line-height:1.35;}
 
 .bk-entry-meta{display:flex; align-items:baseline; justify-content:space-between; gap:12px;
@@ -797,16 +812,18 @@ const CSS = `
 .bk-entry-sub{font-size:.76rem; color:var(--dim);}
 .bk-entry-net{font-size:1.1rem; font-weight:600; white-space:nowrap; text-align:right; line-height:1.1;}
 .bk-entry-net.bk-pending{color:var(--faint);}
+.bk-entry-net.bk-even{color:var(--dim);}
 .bk-tag{display:inline-block; font-family:var(--sans); font-size:.57rem; text-transform:uppercase;
   letter-spacing:.1em; color:var(--faint); margin-left:7px; font-weight:600;}
 
-.bk-outcomes{display:grid; grid-template-columns:repeat(4,1fr); gap:7px;}
-.bk-outcomes button{padding:11px 4px; border-radius:10px; cursor:pointer; font-family:var(--sans);
-  font-size:.82rem; font-weight:700; white-space:nowrap;
+.bk-outcomes{display:grid; grid-template-columns:repeat(5,1fr); gap:6px;}
+.bk-outcomes button{padding:11px 3px; border-radius:10px; cursor:pointer; font-family:var(--sans);
+  font-size:.8rem; font-weight:700; white-space:nowrap;
   border:1px solid var(--line2); background:var(--panel2); color:var(--dim); transition:all .13s;}
 .bk-outcomes button:hover{color:var(--ink); border-color:var(--faint);}
 .bk-outcomes button.on-win{border-color:var(--win); background:var(--win-bg); color:var(--win);}
 .bk-outcomes button.on-lose{border-color:var(--lose); background:var(--lose-bg); color:var(--lose);}
+.bk-outcomes button.on-even{border-color:var(--brass-dim); background:rgba(203,162,78,.14); color:var(--brass);}
 
 .bk-del{width:30px; height:30px; flex-shrink:0; border:1px solid var(--line2); border-radius:8px; background:transparent;
   color:var(--faint); cursor:pointer; font-size:.85rem; line-height:1; transition:all .15s;}
@@ -825,7 +842,8 @@ const CSS = `
 @media (max-width:420px){
   .bk-wrap{padding:18px 14px 50px;}
   .bk-subgrid{gap:14px 22px;}
-  .bk-outcomes button{font-size:.78rem; padding:11px 2px;}
+  .bk-outcomes button{font-size:.7rem; padding:11px 1px;}
+  .bk-outcomes{gap:5px;}
   .bk-mult button{min-width:42px; padding:0 9px;}
 }
 
