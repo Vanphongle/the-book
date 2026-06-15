@@ -33,12 +33,6 @@ const MULTS = [1, 10, 100];
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n || 0);
 const cx = (...a) => a.filter(Boolean).join(" ");
-const fmtDate = (iso) => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
-};
 const fmtMD = (d) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
 const fmtDayHead = (d) =>
   new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(d);
@@ -369,7 +363,7 @@ export default function App() {
       doc.setFontSize(10);
       doc.setTextColor(120);
       doc.text(
-        `Bet statement · ${new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(new Date())}`,
+        `${viewMode === "week" ? "Week" : "Day"} statement · ${periodLabel}`,
         M,
         70
       );
@@ -386,7 +380,13 @@ export default function App() {
             ? money(0)
             : (isPay ? "+" : "-") + money(s.value);
         return {
-          cells: [fmtDate(e.created_at), e.name || "-", money(e.amount), PRINT_LABEL[e.outcome] || e.outcome, amt],
+          cells: [
+            fmtMD(keyToDate(betDayKey(e))),
+            e.name || "-",
+            money(e.amount),
+            PRINT_LABEL[e.outcome] || e.outcome,
+            amt,
+          ],
           color: isPay ? green : isCollect ? red : null,
         };
       });
@@ -594,7 +594,12 @@ export default function App() {
 
   // The player's ledger for the printed PDF statement (this period), oldest first.
   const printBets = useMemo(
-    () => (filter ? [...periodEntries].sort((a, b) => cmpEntries(a, b, "old")) : []),
+    () =>
+      filter
+        ? [...periodEntries].sort(
+            (a, b) => betDayKey(a).localeCompare(betDayKey(b)) || cmpEntries(a, b, "old")
+          )
+        : [],
     [filter, periodEntries]
   );
 
