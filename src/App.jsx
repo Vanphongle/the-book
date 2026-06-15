@@ -5,11 +5,12 @@ import {
   updateBetOutcome,
   updateBet,
   deleteBet,
-  clearBets,
   fetchPlayers,
   insertPlayer,
   updatePlayer,
   renameBetsPerson,
+  fetchPeriods,
+  addPeriod,
   subscribeChanges,
 } from "./db";
 
@@ -41,14 +42,6 @@ const fmtMD = (d) => new Intl.DateTimeFormat("en-US", { month: "short", day: "nu
 const fmtDayHead = (d) =>
   new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(d);
 
-// Start of the week (Monday 00:00) that contains d.
-function mondayOfWeek(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  const dow = (x.getDay() + 6) % 7; // 0 = Monday … 6 = Sunday
-  x.setDate(x.getDate() - dow);
-  return x;
-}
 const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
 // Order comparator: by created_at, then id (ids encode submission order). The id
@@ -113,13 +106,14 @@ export default function App() {
   const [showEarnings, setShowEarnings] = useState(false);
   const [showAdd, setShowAdd] = useState(true);
   const [sort, setSort] = useState("new"); // "new" = newest first, "old" = oldest first
-  const [weekOffset, setWeekOffset] = useState(0); // 0 = this week, -1 = last week …
+  const [periods, setPeriods] = useState([]); // settlement-cycle boundaries
+  const [periodOffset, setPeriodOffset] = useState(0); // 0 = current, -1 = previous …
+  const [confirmNewPeriod, setConfirmNewPeriod] = useState(false);
   const [collapsedDays, setCollapsedDays] = useState(() => new Set());
   const [editId, setEditId] = useState(null); // bet being edited (note + amount)
   const [editText, setEditText] = useState("");
   const [editAmount, setEditAmount] = useState("");
   const [confirmId, setConfirmId] = useState(null);
-  const [confirmClear, setConfirmClear] = useState(false);
 
   // Players drawer + the active player filter (null = all players).
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -148,6 +142,9 @@ export default function App() {
       });
     fetchPlayers()
       .then((rows) => alive && setPlayers(rows))
+      .catch((e) => console.error(e));
+    fetchPeriods()
+      .then((rows) => alive && setPeriods(rows))
       .catch((e) => console.error(e));
     return () => {
       alive = false;
@@ -181,6 +178,7 @@ export default function App() {
       t = setTimeout(() => {
         fetchBets().then(setEntries).catch((e) => console.error(e));
         fetchPlayers().then(setPlayers).catch((e) => console.error(e));
+        fetchPeriods().then(setPeriods).catch((e) => console.error(e));
       }, 250);
     };
     const unsub = subscribeChanges(refresh);
@@ -427,53 +425,72 @@ export default function App() {
       resync();
     });
   }
-  function clearAll() {
-    setEntries([]);
-    setConfirmClear(false);
-    clearBets().catch((err) => {
-      setErr("Failed to clear bets.");
+  // Close the current settlement period: stamp a boundary at now. Everything up to
+  // now becomes a closed period; new bets start fresh. Nothing is deleted.
+  function startNewPeriod() {
+    setConfirmNewPeriod(false);
+    const p = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      started_at: new Date().toISOString(),
+    };
+    setPeriods((prev) => [...prev, p]);
+    setPeriodOffset(0); // jump to the fresh period
+    addPeriod(p).catch((err) => {
+      setErr("Failed to start a new period.");
       console.error(err);
-      resync();
+      fetchPeriods().then(setPeriods).catch(() => {});
     });
   }
 
-  // The book respects the active player filter; the earnings total follows suit.
+  // The book respects the active player filter; the period scopes everything after.
   const visibleEntries = useMemo(
     () => (filter ? entries.filter((e) => e.person === filter) : entries),
     [entries, filter]
   );
 
-  // The visible week window [start, end) based on the week switcher offset.
-  const weekStart = useMemo(() => {
-    const m = mondayOfWeek(new Date());
-    m.setDate(m.getDate() + weekOffset * 7);
-    return m;
-  }, [weekOffset]);
-  const weekEnd = useMemo(() => {
-    const e = new Date(weekStart);
-    e.setDate(e.getDate() + 7);
-    return e;
-  }, [weekStart]);
-  const weekLabel = useMemo(() => {
-    const last = new Date(weekEnd);
-    last.setDate(last.getDate() - 1);
-    return `${fmtMD(weekStart)} – ${fmtMD(last)}`;
-  }, [weekStart, weekEnd]);
+  // Period boundaries (close-out timestamps), ascending.
+  const boundaries = useMemo(
+    () =>
+      periods
+        .map((p) => new Date(p.started_at).getTime())
+        .filter((t) => !isNaN(t))
+        .sort((a, b) => a - b),
+    [periods]
+  );
 
-  // Bets entered in the selected week (after the player filter).
-  const weekEntries = useMemo(() => {
-    const s = weekStart.getTime();
-    const e = weekEnd.getTime();
-    return visibleEntries.filter((x) => {
-      const t = new Date(x.created_at || 0).getTime();
-      return t >= s && t < e;
-    });
-  }, [visibleEntries, weekStart, weekEnd]);
+  // The viewed period window [start, end). The newest segment is the open one.
+  const period = useMemo(() => {
+    const currentIdx = boundaries.length; // segments are 0 … boundaries.length
+    let idx = currentIdx + periodOffset;
+    if (idx < 0) idx = 0;
+    if (idx > currentIdx) idx = currentIdx;
+    const start = idx === 0 ? 0 : boundaries[idx - 1];
+    const end = idx === currentIdx ? Infinity : boundaries[idx];
+    return { idx, currentIdx, start, end, isCurrent: idx === currentIdx };
+  }, [boundaries, periodOffset]);
+
+  const periodLabel = useMemo(() => {
+    if (period.start === 0 && period.end === Infinity) return "All bets";
+    const startTxt = period.start === 0 ? "Start" : fmtMD(new Date(period.start));
+    const endTxt = period.end === Infinity ? "now" : fmtMD(new Date(period.end));
+    return `${startTxt} – ${endTxt}`;
+  }, [period]);
+  const periodSub = period.isCurrent ? "open period" : "closed period";
+
+  // Bets entered in the selected period (after the player filter).
+  const periodEntries = useMemo(
+    () =>
+      visibleEntries.filter((x) => {
+        const t = new Date(x.created_at || 0).getTime();
+        return t >= period.start && t < period.end;
+      }),
+    [visibleEntries, period]
+  );
 
   // Group the week's bets by the day they were entered, ordered by the sort toggle.
   const dayGroups = useMemo(() => {
     const map = new Map();
-    for (const e of weekEntries) {
+    for (const e of periodEntries) {
       const d = new Date(e.created_at || 0);
       const key = dayKey(d);
       if (!map.has(key)) map.set(key, []);
@@ -492,7 +509,7 @@ export default function App() {
     });
     groups.sort((a, b) => (sort === "new" ? b.time - a.time : a.time - b.time));
     return groups;
-  }, [weekEntries, sort]);
+  }, [periodEntries, sort]);
 
   function toggleDay(key) {
     setCollapsedDays((prev) => {
@@ -503,21 +520,22 @@ export default function App() {
     });
   }
 
+  // Totals scope to the selected period (the open one by default).
   const totals = useMemo(() => {
     let collect = 0, pay = 0, pending = 0;
-    for (const e of visibleEntries) {
+    for (const e of periodEntries) {
       const s = settle(e.outcome, e.amount);
       if (s.dir === "collect") collect += s.value;
       else if (s.dir === "pay") pay += s.value;
       else if (s.dir === "pending") pending += 1;
     }
-    return { collect, pay, net: collect - pay, count: visibleEntries.length, pending };
-  }, [visibleEntries]);
+    return { collect, pay, net: collect - pay, count: periodEntries.length, pending };
+  }, [periodEntries]);
 
-  // The player's full ledger for the printed PDF statement, oldest first.
+  // The player's ledger for the printed PDF statement (this period), oldest first.
   const printBets = useMemo(
-    () => (filter ? [...visibleEntries].sort((a, b) => cmpEntries(a, b, "old")) : []),
-    [filter, visibleEntries]
+    () => (filter ? [...periodEntries].sort((a, b) => cmpEntries(a, b, "old")) : []),
+    [filter, periodEntries]
   );
 
   const netCls = totals.net > 0 ? "bk-pos" : totals.net < 0 ? "bk-neg" : "bk-zero";
@@ -758,6 +776,32 @@ export default function App() {
             </div>
           )
         )}
+
+        <div className="bk-drawer-foot">
+          {confirmNewPeriod ? (
+            <div className="bk-newperiod-confirm">
+              <div className="bk-newperiod-msg">
+                Close this period and start fresh? Totals reset to $0. Nothing is
+                deleted — old bets stay under previous periods.
+              </div>
+              <div className="bk-newperiod-actions">
+                <button className="bk-newperiod-yes" onClick={startNewPeriod}>
+                  Settle &amp; start
+                </button>
+                <button
+                  className="bk-newperiod-no"
+                  onClick={() => setConfirmNewPeriod(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className="bk-newperiod-btn" onClick={() => setConfirmNewPeriod(true)}>
+              ⟳ Settle &amp; start new period
+            </button>
+          )}
+        </div>
       </aside>
 
       <div className="bk-wrap">
@@ -772,15 +816,6 @@ export default function App() {
             </button>
             <span className="bk-title">The Book</span>
           </div>
-          {entries.length > 0 &&
-            (confirmClear ? (
-              <span className="bk-clear-confirm">
-                <button className="bk-cc-yes" onClick={clearAll}>clear all</button>
-                <button className="bk-cc-no" onClick={() => setConfirmClear(false)}>cancel</button>
-              </span>
-            ) : (
-              <button className="bk-clear" onClick={() => setConfirmClear(true)}>Clear</button>
-            ))}
         </header>
 
         {err && (
@@ -985,42 +1020,38 @@ export default function App() {
 
         {/* Lines */}
         <section>
-          {/* Week switcher */}
+          {/* Period switcher */}
           <div className="bk-week">
             <button
               className="bk-week-nav"
-              onClick={() => setWeekOffset((w) => w - 1)}
-              aria-label="Previous week"
+              onClick={() => setPeriodOffset((o) => o - 1)}
+              disabled={period.idx === 0}
+              aria-label="Previous period"
             >
               ‹
             </button>
             <button
               className="bk-week-label"
-              onClick={() => setWeekOffset(0)}
-              title="Jump to this week"
+              onClick={() => setPeriodOffset(0)}
+              title="Jump to the current period"
             >
-              <span className="bk-week-range">{weekLabel}</span>
-              <span className="bk-week-sub">
-                {weekOffset === 0
-                  ? "this week"
-                  : weekOffset === -1
-                  ? "last week"
-                  : `${weekOffset > 0 ? "+" : ""}${weekOffset} weeks`}
-              </span>
+              <span className="bk-week-range">{periodLabel}</span>
+              <span className="bk-week-sub">{periodSub}</span>
             </button>
             <button
               className="bk-week-nav"
-              onClick={() => setWeekOffset((w) => w + 1)}
-              aria-label="Next week"
+              onClick={() => setPeriodOffset((o) => o + 1)}
+              disabled={period.isCurrent}
+              aria-label="Next period"
             >
               ›
             </button>
           </div>
 
-          {weekEntries.length > 0 && (
+          {periodEntries.length > 0 && (
             <div className="bk-list-head">
               <span className="bk-list-count">
-                {weekEntries.length} {weekEntries.length === 1 ? "bet" : "bets"} this week
+                {periodEntries.length} {periodEntries.length === 1 ? "bet" : "bets"} this period
               </span>
               <div className="bk-sort" role="group" aria-label="Sort by date">
                 <button className={cx(sort === "new" && "on")} onClick={() => setSort("new")}>
@@ -1033,9 +1064,13 @@ export default function App() {
             </div>
           )}
 
-          {loaded && weekEntries.length === 0 && (
+          {loaded && periodEntries.length === 0 && (
             <div className="bk-empty">
-              {filter ? `No bets for ${filter} this week.` : "No bets entered this week."}
+              {filter
+                ? `No bets for ${filter} this period.`
+                : period.isCurrent
+                ? "No bets in this period yet. Add one above to start."
+                : "No bets in this period."}
             </div>
           )}
           {dayGroups.map((g) => {
@@ -1132,6 +1167,18 @@ const CSS = `
 .bk-player-count{font-family:var(--mono); font-size:.74rem; color:var(--faint); flex-shrink:0;}
 .bk-player-item.on .bk-player-count{color:var(--brass-dim);}
 .bk-drawer-empty{color:var(--faint); font-size:.8rem; padding:10px 12px;}
+.bk-drawer-foot{margin-top:auto; padding-top:14px; border-top:1px solid var(--line);}
+.bk-newperiod-btn{width:100%; padding:11px; border:1px solid var(--brass-dim); border-radius:10px;
+  background:rgba(203,162,78,.12); color:var(--brass); font-family:var(--sans); font-size:.8rem;
+  font-weight:700; cursor:pointer; transition:all .15s;}
+.bk-newperiod-btn:hover{border-color:var(--brass); background:rgba(203,162,78,.2);}
+.bk-newperiod-confirm{border:1px solid var(--brass-dim); border-radius:10px; padding:12px; background:var(--panel2);}
+.bk-newperiod-msg{font-size:.74rem; color:var(--dim); line-height:1.5; margin-bottom:10px;}
+.bk-newperiod-actions{display:flex; gap:6px;}
+.bk-newperiod-yes{flex:1; padding:9px; border:1px solid var(--brass); border-radius:8px;
+  background:rgba(203,162,78,.2); color:var(--brass); font-weight:700; font-size:.76rem; cursor:pointer; font-family:var(--sans);}
+.bk-newperiod-no{flex:1; padding:9px; border:1px solid var(--line2); border-radius:8px;
+  background:transparent; color:var(--dim); font-size:.76rem; cursor:pointer; font-family:var(--sans);}
 
 .bk-filter-bar{display:flex; align-items:center; justify-content:space-between; gap:10px;
   background:rgba(203,162,78,.1); border:1px solid var(--brass-dim); border-radius:10px;
@@ -1260,6 +1307,8 @@ const CSS = `
 .bk-week-nav{width:38px; height:42px; flex-shrink:0; border:1px solid var(--line2); border-radius:10px;
   background:var(--panel2); color:var(--dim); font-size:1.25rem; line-height:1; cursor:pointer; transition:all .13s;}
 .bk-week-nav:hover{color:var(--brass); border-color:var(--brass-dim);}
+.bk-week-nav:disabled{opacity:.3; cursor:default;}
+.bk-week-nav:disabled:hover{color:var(--dim); border-color:var(--line2);}
 .bk-week-label{flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:1px;
   border:1px solid var(--line); border-radius:10px; background:var(--panel); padding:6px 10px;
   cursor:pointer; font-family:var(--sans); transition:border-color .13s;}

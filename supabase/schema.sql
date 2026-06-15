@@ -55,3 +55,25 @@ create policy "anon full access"
   to anon
   using (true)
   with check (true);
+
+-- Periods — manual settlement cycles. Each row is a "start new period" boundary
+-- timestamp; bets belong to the period whose [start, next) range contains them.
+-- Closing a period never deletes anything; totals just scope to the open period.
+create table if not exists public.periods (
+  id         text primary key,
+  started_at timestamptz not null default now()
+);
+
+create index if not exists periods_started_at_idx on public.periods (started_at);
+
+grant select, insert, update, delete on table public.periods to anon;
+
+alter table public.periods enable row level security;
+
+drop policy if exists "anon full access" on public.periods;
+create policy "anon full access"
+  on public.periods
+  for all
+  to anon
+  using (true)
+  with check (true);

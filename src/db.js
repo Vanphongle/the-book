@@ -5,8 +5,10 @@ import { supabase, isSupabaseConfigured } from "./supabaseClient";
 
 const TABLE = "bets";
 const PLAYERS_TABLE = "players";
+const PERIODS_TABLE = "periods";
 const LS_BETS = "the-book.bets.v1";
 const LS_PLAYERS = "the-book.players.v1";
+const LS_PERIODS = "the-book.periods.v1";
 
 // ---- localStorage fallback ---------------------------------------------------
 function lsReadKey(key) {
@@ -142,6 +144,28 @@ export async function renameBetsPerson(oldName, newName) {
   if (error) throw error;
 }
 
+// ---- periods (manual settlement cycles) --------------------------------------
+export async function fetchPeriods() {
+  if (!isSupabaseConfigured) return lsReadKey(LS_PERIODS);
+  const { data, error } = await supabase
+    .from(PERIODS_TABLE)
+    .select("*")
+    .order("started_at");
+  if (error) throw error;
+  return (data || []).map((r) => ({ id: r.id, started_at: r.started_at }));
+}
+
+export async function addPeriod(period) {
+  if (!isSupabaseConfigured) {
+    lsWriteKey(LS_PERIODS, [...lsReadKey(LS_PERIODS), period]);
+    return;
+  }
+  const { error } = await supabase
+    .from(PERIODS_TABLE)
+    .insert({ id: period.id, started_at: period.started_at });
+  if (error) throw error;
+}
+
 // ---- realtime ----------------------------------------------------------------
 // Subscribe to any change on the bets/players tables (insert/update/delete) from
 // any device. Calls onChange() on each event. Returns an unsubscribe function.
@@ -152,6 +176,7 @@ export function subscribeChanges(onChange) {
     .channel("the-book-changes")
     .on("postgres_changes", { event: "*", schema: "public", table: TABLE }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: PLAYERS_TABLE }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: PERIODS_TABLE }, onChange)
     .subscribe();
   return () => supabase.removeChannel(channel);
 }
