@@ -37,6 +37,8 @@ const rowToEntry = (r) => ({
   name: r.name || "",
   amount: Number(r.amount),
   outcome: r.outcome,
+  bet_date: r.bet_date || "",
+  period_id: r.period_id || "",
   created_at: r.created_at || "",
 });
 
@@ -62,8 +64,22 @@ export async function insertBet(entry) {
     name: entry.name,
     amount: entry.amount,
     outcome: entry.outcome,
+    bet_date: entry.bet_date || null,
+    period_id: entry.period_id || null,
     created_at: entry.created_at,
   });
+  if (error) throw error;
+}
+
+// Bulk-assign a settle period to a set of bets (closes those days).
+export async function assignPeriod(ids, periodId) {
+  if (!ids.length) return;
+  if (!isSupabaseConfigured) {
+    const set = new Set(ids);
+    lsWrite(lsRead().map((e) => (set.has(e.id) ? { ...e, period_id: periodId } : e)));
+    return;
+  }
+  const { error } = await supabase.from(TABLE).update({ period_id: periodId }).in("id", ids);
   if (error) throw error;
 }
 

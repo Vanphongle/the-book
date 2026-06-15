@@ -9,8 +9,13 @@ create table if not exists public.bets (
   name       text default '',             -- note / match info (secondary line)
   amount     numeric not null,            -- already multiplied by 100
   outcome    text not null check (outcome in ('win', 'halfwin', 'halflose', 'lose', 'pending', 'push')),
+  bet_date   date,                        -- the day this bet is filed under (user-chosen)
+  period_id  text,                        -- settle period it belongs to (null = open/unsettled)
   created_at timestamptz not null default now()
 );
+
+create index if not exists bets_period_id_idx on public.bets (period_id);
+create index if not exists bets_bet_date_idx on public.bets (bet_date);
 
 create index if not exists bets_created_at_idx on public.bets (created_at desc);
 

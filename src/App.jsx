@@ -11,6 +11,7 @@ import {
   renameBetsPerson,
   fetchPeriods,
   addPeriod,
+  assignPeriod,
   subscribeChanges,
 } from "./db";
 
@@ -42,7 +43,16 @@ const fmtMD = (d) => new Intl.DateTimeFormat("en-US", { month: "short", day: "nu
 const fmtDayHead = (d) =>
   new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric" }).format(d);
 
-const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+const pad2 = (n) => String(n).padStart(2, "0");
+// Local YYYY-MM-DD key (matches the <input type="date"> / bet_date format).
+const dateToKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const keyToDate = (k) => {
+  const [y, m, d] = k.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+const todayKey = () => dateToKey(new Date());
+// The day a bet is filed under: its chosen bet_date, else the entry date.
+const betDayKey = (e) => e.bet_date || dateToKey(new Date(e.created_at || 0));
 
 // Order comparator: by created_at, then id (ids encode submission order). The id
 // tiebreak runs opposite to the time sort so submission order is preserved.
@@ -103,12 +113,13 @@ export default function App() {
   const [person, setPerson] = useState(""); // selected player name, or NEW_PLAYER
   const [newPlayer, setNewPlayer] = useState(""); // typed name when adding inline
   const [rows, setRows] = useState(() => [makeRow()]);
+  const [betDate, setBetDate] = useState(() => todayKey()); // day the bet is filed under
   const [showEarnings, setShowEarnings] = useState(false);
   const [showAdd, setShowAdd] = useState(true);
   const [sort, setSort] = useState("new"); // "new" = newest first, "old" = oldest first
-  const [periods, setPeriods] = useState([]); // settlement-cycle boundaries
-  const [periodOffset, setPeriodOffset] = useState(0); // 0 = current, -1 = previous …
-  const [confirmNewPeriod, setConfirmNewPeriod] = useState(false);
+  const [periods, setPeriods] = useState([]); // settle events
+  const [periodOffset, setPeriodOffset] = useState(0); // 0 = open, -1 = last settled …
+  const [selectedDays, setSelectedDays] = useState(() => new Set()); // days ticked to settle
   const [collapsedDays, setCollapsedDays] = useState(() => new Set());
   const [editId, setEditId] = useState(null); // bet being edited (note + amount)
   const [editText, setEditText] = useState("");
@@ -270,6 +281,8 @@ export default function App() {
         name: [r.note.trim(), ratio].filter(Boolean).join(" "),
         amount: (parseFloat(r.amount) || 0) * r.mult,
         outcome: "pending",
+        bet_date: betDate, // the day this bet is filed under (chosen above)
+        period_id: "", // open / unsettled until you settle its day
         // Stagger by 1ms per row so each bet has a distinct, ordered timestamp.
         // Identical created_at values let the DB return ties in random order on
         // reload (the "shuffle"). Row 0 stays the newest, so it sits on top.
@@ -425,78 +438,103 @@ export default function App() {
       resync();
     });
   }
-  // Close the current settlement period: stamp a boundary at now. Everything up to
-  // now becomes a closed period; new bets start fresh. Nothing is deleted.
-  function startNewPeriod() {
-    setConfirmNewPeriod(false);
+  // Settle the ticked days in bulk: create a settle period and stamp period_id on
+  // every OPEN bet whose day is selected. Nothing is deleted; days just close.
+  function settleSelectedDays() {
+    const ids = openEntries.filter((e) => selectedDays.has(betDayKey(e))).map((e) => e.id);
+    if (!ids.length) return;
     const p = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       started_at: new Date().toISOString(),
     };
     setPeriods((prev) => [...prev, p]);
-    setPeriodOffset(0); // jump to the fresh period
-    addPeriod(p).catch((err) => {
-      setErr("Failed to start a new period.");
-      console.error(err);
-      fetchPeriods().then(setPeriods).catch(() => {});
+    setEntries((prev) =>
+      prev.map((e) => (ids.includes(e.id) ? { ...e, period_id: p.id } : e))
+    );
+    setSelectedDays(new Set());
+    setPeriodOffset(0);
+    addPeriod(p)
+      .then(() => assignPeriod(ids, p.id))
+      .catch((err) => {
+        setErr("Failed to settle those days.");
+        console.error(err);
+        resync();
+      });
+  }
+
+  function toggleDaySelect(key) {
+    setSelectedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
     });
   }
 
-  // The book respects the active player filter; the period scopes everything after.
-  const visibleEntries = useMemo(
-    () => (filter ? entries.filter((e) => e.person === filter) : entries),
-    [entries, filter]
-  );
+  // Open (unsettled) bets, before the player filter — settling is global.
+  const openEntries = useMemo(() => entries.filter((e) => !e.period_id), [entries]);
 
-  // Period boundaries (close-out timestamps), ascending.
-  const boundaries = useMemo(
-    () =>
-      periods
-        .map((p) => new Date(p.started_at).getTime())
-        .filter((t) => !isNaN(t))
-        .sort((a, b) => a - b),
-    [periods]
-  );
+  // Settled periods that actually have bets, oldest first, with a day-span label.
+  const settledPeriods = useMemo(() => {
+    const byId = new Map();
+    for (const e of entries) {
+      if (!e.period_id) continue;
+      const g = byId.get(e.period_id) || { id: e.period_id, days: new Set() };
+      g.days.add(betDayKey(e));
+      byId.set(e.period_id, g);
+    }
+    const metaById = new Map(periods.map((p) => [p.id, p]));
+    return [...byId.values()]
+      .map((g) => {
+        const meta = metaById.get(g.id);
+        const dayList = [...g.days].sort();
+        const startTxt = fmtMD(keyToDate(dayList[0]));
+        const endTxt = fmtMD(keyToDate(dayList[dayList.length - 1]));
+        return {
+          id: g.id,
+          time: meta ? new Date(meta.started_at).getTime() : 0,
+          label: startTxt === endTxt ? startTxt : `${startTxt} – ${endTxt}`,
+          settledOn: meta ? fmtMD(new Date(meta.started_at)) : "",
+        };
+      })
+      .sort((a, b) => a.time - b.time);
+  }, [entries, periods]);
 
-  // The viewed period window [start, end). The newest segment is the open one.
+  // The viewed segment: settled periods (oldest→newest) then the open set (current).
   const period = useMemo(() => {
-    const currentIdx = boundaries.length; // segments are 0 … boundaries.length
+    const currentIdx = settledPeriods.length;
     let idx = currentIdx + periodOffset;
     if (idx < 0) idx = 0;
     if (idx > currentIdx) idx = currentIdx;
-    const start = idx === 0 ? 0 : boundaries[idx - 1];
-    const end = idx === currentIdx ? Infinity : boundaries[idx];
-    return { idx, currentIdx, start, end, isCurrent: idx === currentIdx };
-  }, [boundaries, periodOffset]);
+    const isOpen = idx === currentIdx;
+    const settled = isOpen ? null : settledPeriods[idx];
+    return { idx, currentIdx, isOpen, settled };
+  }, [settledPeriods, periodOffset]);
 
-  const periodLabel = useMemo(() => {
-    if (period.start === 0 && period.end === Infinity) return "All bets";
-    const startTxt = period.start === 0 ? "Start" : fmtMD(new Date(period.start));
-    const endTxt = period.end === Infinity ? "now" : fmtMD(new Date(period.end));
-    return `${startTxt} – ${endTxt}`;
-  }, [period]);
-  const periodSub = period.isCurrent ? "open period" : "closed period";
+  const periodLabel = period.isOpen ? "Open" : period.settled.label;
+  const periodSub = period.isOpen
+    ? "unsettled"
+    : period.settled.settledOn
+    ? `settled ${period.settled.settledOn}`
+    : "settled";
 
-  // Bets entered in the selected period (after the player filter).
-  const periodEntries = useMemo(
-    () =>
-      visibleEntries.filter((x) => {
-        const t = new Date(x.created_at || 0).getTime();
-        return t >= period.start && t < period.end;
-      }),
-    [visibleEntries, period]
-  );
+  // The book respects the active player filter; then scope to the viewed period.
+  const periodEntries = useMemo(() => {
+    const scoped = period.isOpen
+      ? openEntries
+      : entries.filter((e) => e.period_id === period.settled.id);
+    return filter ? scoped.filter((e) => e.person === filter) : scoped;
+  }, [entries, openEntries, period, filter]);
 
-  // Group the week's bets by the day they were entered, ordered by the sort toggle.
+  // Group by the day each bet is filed under, ordered by the sort toggle.
   const dayGroups = useMemo(() => {
     const map = new Map();
     for (const e of periodEntries) {
-      const d = new Date(e.created_at || 0);
-      const key = dayKey(d);
+      const key = betDayKey(e);
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(e);
     }
-    const groups = [...map.values()].map((list) => {
+    const groups = [...map.entries()].map(([key, list]) => {
       const items = [...list].sort((a, b) => cmpEntries(a, b, sort));
       let collect = 0, pay = 0;
       for (const e of items) {
@@ -504,8 +542,8 @@ export default function App() {
         if (s.dir === "collect") collect += s.value;
         else if (s.dir === "pay") pay += s.value;
       }
-      const d = new Date(items[0].created_at || 0);
-      return { key: dayKey(d), items, net: collect - pay, label: fmtDayHead(d), time: d.getTime() };
+      const d = keyToDate(key);
+      return { key, items, net: collect - pay, label: fmtDayHead(d), time: d.getTime() };
     });
     groups.sort((a, b) => (sort === "new" ? b.time - a.time : a.time - b.time));
     return groups;
@@ -624,12 +662,7 @@ export default function App() {
         )}
 
         <div className="bk-entry-meta">
-          <span className="bk-entry-sub mono">
-            bet {money(e.amount)}
-            {fmtDate(e.created_at) && (
-              <span className="bk-entry-date"> · {fmtDate(e.created_at)}</span>
-            )}
-          </span>
+          <span className="bk-entry-sub mono">bet {money(e.amount)}</span>
           {pending ? (
             <span className="bk-entry-net bk-pending mono">
               —<span className="bk-tag">not settled</span>
@@ -778,29 +811,10 @@ export default function App() {
         )}
 
         <div className="bk-drawer-foot">
-          {confirmNewPeriod ? (
-            <div className="bk-newperiod-confirm">
-              <div className="bk-newperiod-msg">
-                Close this period and start fresh? Totals reset to $0. Nothing is
-                deleted — old bets stay under previous periods.
-              </div>
-              <div className="bk-newperiod-actions">
-                <button className="bk-newperiod-yes" onClick={startNewPeriod}>
-                  Settle &amp; start
-                </button>
-                <button
-                  className="bk-newperiod-no"
-                  onClick={() => setConfirmNewPeriod(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button className="bk-newperiod-btn" onClick={() => setConfirmNewPeriod(true)}>
-              ⟳ Settle &amp; start new period
-            </button>
-          )}
+          <div className="bk-drawer-hint">
+            Settle days from the list — tick the days you've settled and tap
+            “Settle”. Nothing is deleted; settled days move to past periods.
+          </div>
         </div>
       </aside>
 
@@ -922,6 +936,24 @@ export default function App() {
               autoFocus
             />
           )}
+          <label className="bk-daypick">
+            <span className="bk-daypick-label">Day</span>
+            <input
+              type="date"
+              className="bk-input bk-daypick-input"
+              value={betDate}
+              onChange={(e) => setBetDate(e.target.value || todayKey())}
+            />
+            {betDate !== todayKey() && (
+              <button
+                type="button"
+                className="bk-daypick-today"
+                onClick={() => setBetDate(todayKey())}
+              >
+                Today
+              </button>
+            )}
+          </label>
           <div className="bk-rows">
             {rows.map((r) => (
               <div className="bk-brow" key={r.key}>
@@ -1041,7 +1073,7 @@ export default function App() {
             <button
               className="bk-week-nav"
               onClick={() => setPeriodOffset((o) => o + 1)}
-              disabled={period.isCurrent}
+              disabled={period.isOpen}
               aria-label="Next period"
             >
               ›
@@ -1068,37 +1100,50 @@ export default function App() {
             <div className="bk-empty">
               {filter
                 ? `No bets for ${filter} this period.`
-                : period.isCurrent
+                : period.isOpen
                 ? "No bets in this period yet. Add one above to start."
                 : "No bets in this period."}
             </div>
           )}
           {dayGroups.map((g) => {
             const collapsed = collapsedDays.has(g.key);
+            const canSettle = period.isOpen && !filter;
+            const picked = selectedDays.has(g.key);
             return (
-              <div className="bk-day" key={g.key}>
-                <button
-                  className="bk-day-head"
-                  onClick={() => toggleDay(g.key)}
-                  aria-expanded={!collapsed}
-                >
-                  <span className="bk-day-date">{g.label}</span>
-                  <span className="bk-day-meta">
-                    <span className="bk-day-count">
-                      {g.items.length} {g.items.length === 1 ? "bet" : "bets"}
+              <div className={cx("bk-day", canSettle && picked && "picked")} key={g.key}>
+                <div className="bk-day-head-row">
+                  {canSettle && (
+                    <input
+                      type="checkbox"
+                      className="bk-day-check"
+                      checked={picked}
+                      onChange={() => toggleDaySelect(g.key)}
+                      aria-label={`Select ${g.label} to settle`}
+                    />
+                  )}
+                  <button
+                    className="bk-day-head"
+                    onClick={() => toggleDay(g.key)}
+                    aria-expanded={!collapsed}
+                  >
+                    <span className="bk-day-date">{g.label}</span>
+                    <span className="bk-day-meta">
+                      <span className="bk-day-count">
+                        {g.items.length} {g.items.length === 1 ? "bet" : "bets"}
+                      </span>
+                      <span
+                        className={cx(
+                          "mono bk-day-net",
+                          g.net > 0 ? "bk-pos" : g.net < 0 ? "bk-neg" : "bk-zero"
+                        )}
+                      >
+                        {g.net > 0 ? "+" : ""}
+                        {money(Math.abs(g.net))}
+                      </span>
+                      <span className="bk-chev">{collapsed ? "▸" : "▾"}</span>
                     </span>
-                    <span
-                      className={cx(
-                        "mono bk-day-net",
-                        g.net > 0 ? "bk-pos" : g.net < 0 ? "bk-neg" : "bk-zero"
-                      )}
-                    >
-                      {g.net > 0 ? "+" : ""}
-                      {money(Math.abs(g.net))}
-                    </span>
-                    <span className="bk-chev">{collapsed ? "▸" : "▾"}</span>
-                  </span>
-                </button>
+                  </button>
+                </div>
                 {!collapsed && <div className="bk-day-body">{g.items.map(renderEntry)}</div>}
               </div>
             );
@@ -1106,6 +1151,21 @@ export default function App() {
         </section>
       </div>
 
+      {period.isOpen && !filter && selectedDays.size > 0 && (
+        <div className="bk-settle-bar">
+          <span className="bk-settle-count">
+            {selectedDays.size} day{selectedDays.size === 1 ? "" : "s"} selected
+          </span>
+          <span className="bk-settle-actions">
+            <button className="bk-settle-clear" onClick={() => setSelectedDays(new Set())}>
+              Clear
+            </button>
+            <button className="bk-settle-go" onClick={settleSelectedDays}>
+              Settle
+            </button>
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -1168,17 +1228,34 @@ const CSS = `
 .bk-player-item.on .bk-player-count{color:var(--brass-dim);}
 .bk-drawer-empty{color:var(--faint); font-size:.8rem; padding:10px 12px;}
 .bk-drawer-foot{margin-top:auto; padding-top:14px; border-top:1px solid var(--line);}
-.bk-newperiod-btn{width:100%; padding:11px; border:1px solid var(--brass-dim); border-radius:10px;
-  background:rgba(203,162,78,.12); color:var(--brass); font-family:var(--sans); font-size:.8rem;
-  font-weight:700; cursor:pointer; transition:all .15s;}
-.bk-newperiod-btn:hover{border-color:var(--brass); background:rgba(203,162,78,.2);}
-.bk-newperiod-confirm{border:1px solid var(--brass-dim); border-radius:10px; padding:12px; background:var(--panel2);}
-.bk-newperiod-msg{font-size:.74rem; color:var(--dim); line-height:1.5; margin-bottom:10px;}
-.bk-newperiod-actions{display:flex; gap:6px;}
-.bk-newperiod-yes{flex:1; padding:9px; border:1px solid var(--brass); border-radius:8px;
-  background:rgba(203,162,78,.2); color:var(--brass); font-weight:700; font-size:.76rem; cursor:pointer; font-family:var(--sans);}
-.bk-newperiod-no{flex:1; padding:9px; border:1px solid var(--line2); border-radius:8px;
-  background:transparent; color:var(--dim); font-size:.76rem; cursor:pointer; font-family:var(--sans);}
+.bk-drawer-hint{font-size:.72rem; color:var(--faint); line-height:1.5; padding:0 6px;}
+
+/* Day picker in the add form */
+.bk-daypick{display:flex; align-items:center; gap:10px; margin-top:12px;}
+.bk-daypick-label{font-size:.66rem; text-transform:uppercase; letter-spacing:.14em; color:var(--brass-dim); font-weight:600;}
+.bk-daypick-input{flex:1; min-width:0; color-scheme:dark;}
+.bk-daypick-today{flex-shrink:0; padding:8px 12px; border:1px solid var(--line2); border-radius:8px;
+  background:transparent; color:var(--dim); font-size:.74rem; font-weight:600; cursor:pointer; font-family:var(--sans);}
+.bk-daypick-today:hover{color:var(--brass); border-color:var(--brass-dim);}
+
+/* Day select-to-settle */
+.bk-day.picked{outline:1px solid var(--brass-dim); outline-offset:3px; border-radius:8px;}
+.bk-day-head-row{display:flex; align-items:center; gap:10px;}
+.bk-day-head-row .bk-day-head{flex:1; min-width:0;}
+.bk-day-check{width:18px; height:18px; flex-shrink:0; accent-color:var(--brass); cursor:pointer;}
+
+.bk-settle-bar{position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:35;
+  display:flex; align-items:center; gap:16px; max-width:520px; width:calc(100% - 36px);
+  justify-content:space-between; background:var(--panel2); border:1px solid var(--brass-dim);
+  border-radius:12px; padding:11px 16px; box-shadow:0 8px 28px rgba(0,0,0,.45); animation:bk-in .18s ease;}
+.bk-settle-count{font-size:.82rem; color:var(--ink); font-weight:600;}
+.bk-settle-actions{display:flex; gap:8px; align-items:center;}
+.bk-settle-clear{background:transparent; border:none; color:var(--faint); cursor:pointer;
+  font-size:.76rem; font-weight:600; font-family:var(--sans);}
+.bk-settle-clear:hover{color:var(--ink);}
+.bk-settle-go{padding:8px 18px; border:1px solid var(--brass); border-radius:9px;
+  background:rgba(203,162,78,.22); color:var(--brass); font-weight:700; font-size:.82rem; cursor:pointer; font-family:var(--sans);}
+.bk-settle-go:hover{background:rgba(203,162,78,.32);}
 
 .bk-filter-bar{display:flex; align-items:center; justify-content:space-between; gap:10px;
   background:rgba(203,162,78,.1); border:1px solid var(--brass-dim); border-radius:10px;
