@@ -121,6 +121,26 @@ export async function insertPlayer(player) {
   if (error) throw error;
 }
 
+export async function updatePlayer(id, name) {
+  if (!isSupabaseConfigured) {
+    lsWriteKey(LS_PLAYERS, lsReadKey(LS_PLAYERS).map((p) => (p.id === id ? { ...p, name } : p)));
+    return;
+  }
+  const { error } = await supabase.from(PLAYERS_TABLE).update({ name }).eq("id", id);
+  if (error) throw error;
+}
+
+// Cascade a rename to every bet linked to the old player name (bets reference a
+// player by the `person` name string, so this keeps them attached after a rename).
+export async function renameBetsPerson(oldName, newName) {
+  if (!isSupabaseConfigured) {
+    lsWrite(lsRead().map((e) => (e.person === oldName ? { ...e, person: newName } : e)));
+    return;
+  }
+  const { error } = await supabase.from(TABLE).update({ person: newName }).eq("person", oldName);
+  if (error) throw error;
+}
+
 // ---- realtime ----------------------------------------------------------------
 // Subscribe to any change on the bets/players tables (insert/update/delete) from
 // any device. Calls onChange() on each event. Returns an unsubscribe function.

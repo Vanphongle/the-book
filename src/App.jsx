@@ -8,6 +8,8 @@ import {
   clearBets,
   fetchPlayers,
   insertPlayer,
+  updatePlayer,
+  renameBetsPerson,
   subscribeChanges,
 } from "./db";
 
@@ -89,6 +91,8 @@ export default function App() {
   const [filter, setFilter] = useState(null);
   const [addingPlayer, setAddingPlayer] = useState(false);
   const [drawerNewName, setDrawerNewName] = useState("");
+  const [editPlayer, setEditPlayer] = useState(null); // player name being renamed
+  const [editPlayerText, setEditPlayerText] = useState("");
 
   // Initial load: bets from Supabase (or localStorage fallback).
   useEffect(() => {
@@ -175,6 +179,28 @@ export default function App() {
     const p = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name };
     setPlayers((prev) => [...prev, p]);
     insertPlayer(p).catch((err) => console.error(err));
+  }
+
+  // Rename a player everywhere: the player record AND every bet linked by the old
+  // name. Fixes a misspelled / wrong player without losing its bets.
+  function renamePlayer(oldName, rawNew) {
+    const newName = rawNew.trim();
+    setEditPlayer(null);
+    if (!newName || newName === oldName) return;
+    // Optimistic local update across players, bets, and the active filter/form.
+    setPlayers((prev) => prev.map((p) => (p.name === oldName ? { ...p, name: newName } : p)));
+    setEntries((prev) => prev.map((e) => (e.person === oldName ? { ...e, person: newName } : e)));
+    if (filter === oldName) setFilter(newName);
+    if (person === oldName) setPerson(newName);
+    const rec = players.find((p) => p.name === oldName);
+    const tasks = [renameBetsPerson(oldName, newName)];
+    if (rec) tasks.push(updatePlayer(rec.id, newName));
+    Promise.all(tasks).catch((err) => {
+      setErr("Failed to rename the player.");
+      console.error(err);
+      resync();
+      fetchPlayers().then(setPlayers).catch(() => {});
+    });
   }
 
   const validRows = rows.filter((r) => (parseFloat(r.amount) || 0) > 0);
@@ -361,19 +387,57 @@ export default function App() {
         {playerNames.length === 0 && (
           <div className="bk-drawer-empty">No players yet. Tap + to add one.</div>
         )}
-        {playerNames.map((nm) => (
-          <button
-            key={nm}
-            className={cx("bk-player-item", filter === nm && "on")}
-            onClick={() => {
-              setFilter(nm);
-              setDrawerOpen(false);
-            }}
-          >
-            <span className="bk-player-name">{nm}</span>
-            <span className="bk-player-count">{countByPlayer[nm] || 0}</span>
-          </button>
-        ))}
+        {playerNames.map((nm) =>
+          editPlayer === nm ? (
+            <form
+              key={nm}
+              className="bk-player-edit"
+              onSubmit={(e) => {
+                e.preventDefault();
+                renamePlayer(nm, editPlayerText);
+              }}
+            >
+              <input
+                className="bk-input"
+                value={editPlayerText}
+                onChange={(e) => setEditPlayerText(e.target.value)}
+                autoFocus
+              />
+              <button className="bk-player-save" type="submit">Save</button>
+              <button
+                className="bk-player-x"
+                type="button"
+                onClick={() => setEditPlayer(null)}
+                aria-label="Cancel rename"
+              >
+                ✕
+              </button>
+            </form>
+          ) : (
+            <div key={nm} className="bk-player-row">
+              <button
+                className={cx("bk-player-item", filter === nm && "on")}
+                onClick={() => {
+                  setFilter(nm);
+                  setDrawerOpen(false);
+                }}
+              >
+                <span className="bk-player-name">{nm}</span>
+                <span className="bk-player-count">{countByPlayer[nm] || 0}</span>
+              </button>
+              <button
+                className="bk-player-edit-btn"
+                onClick={() => {
+                  setEditPlayer(nm);
+                  setEditPlayerText(nm);
+                }}
+                aria-label={`Rename ${nm}`}
+              >
+                ✎
+              </button>
+            </div>
+          )
+        )}
       </aside>
 
       <div className="bk-wrap">
@@ -779,6 +843,17 @@ const CSS = `
 .bk-player-new .bk-input{padding:9px 10px;}
 .bk-player-save{padding:0 12px; border:1px solid var(--brass); border-radius:8px; background:rgba(203,162,78,.16);
   color:var(--brass); font-weight:700; font-size:.78rem; cursor:pointer; font-family:var(--sans);}
+.bk-player-row{display:flex; align-items:center; gap:2px;}
+.bk-player-row .bk-player-item{flex:1; min-width:0;}
+.bk-player-edit-btn{width:34px; height:34px; flex-shrink:0; border:none; border-radius:8px;
+  background:transparent; color:var(--faint); cursor:pointer; font-size:.85rem; transition:all .12s;}
+.bk-player-edit-btn:hover{color:var(--brass); background:var(--panel2);}
+.bk-player-edit{display:flex; align-items:center; gap:5px; padding:3px 2px;}
+.bk-player-edit .bk-input{flex:1; min-width:0; padding:8px 10px;}
+.bk-player-save{flex-shrink:0; padding:0 11px; align-self:stretch; border:1px solid var(--brass); border-radius:8px;
+  background:rgba(203,162,78,.16); color:var(--brass); font-weight:700; font-size:.76rem; cursor:pointer; font-family:var(--sans);}
+.bk-player-x{flex-shrink:0; width:32px; height:32px; border:1px solid var(--line2); border-radius:8px;
+  background:transparent; color:var(--faint); cursor:pointer; font-size:.76rem; line-height:1;}
 .bk-player-item{display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
   padding:11px 12px; border:none; border-radius:9px; background:transparent; color:var(--ink);
   font-family:var(--sans); font-size:.9rem; cursor:pointer; text-align:left; transition:background .12s;}
