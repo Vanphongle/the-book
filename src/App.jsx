@@ -117,13 +117,13 @@ export default function App() {
   const [showEarnings, setShowEarnings] = useState(false);
   const [showAdd, setShowAdd] = useState(true);
   const [sort, setSort] = useState("new"); // "new" = newest first, "old" = oldest first
-  const [periods, setPeriods] = useState([]); // settle events
-  const [periodOffset, setPeriodOffset] = useState(0); // 0 = open, -1 = last settled …
+  const [periods, setPeriods] = useState([]); // settle events (id, started_at)
+  const [dayIndex, setDayIndex] = useState(0); // which bet-day is viewed (0 = newest)
   const [selectedDays, setSelectedDays] = useState(() => new Set()); // days ticked to settle
-  const [collapsedDays, setCollapsedDays] = useState(() => new Set());
-  const [editId, setEditId] = useState(null); // bet being edited (note + amount)
+  const [editId, setEditId] = useState(null); // bet being edited (note + amount + day)
   const [editText, setEditText] = useState("");
   const [editAmount, setEditAmount] = useState("");
+  const [editDate, setEditDate] = useState("");
   const [confirmId, setConfirmId] = useState(null);
 
   // Players drawer + the active player filter (null = all players).
@@ -172,8 +172,9 @@ export default function App() {
   }
 
   // When you filter to a player, prefill the Add-a-bet Person with them so you
-  // don't have to pick the same person again.
+  // don't have to pick the same person again, and start at their newest day.
   useEffect(() => {
+    setDayIndex(0);
     if (filter) {
       setPerson(filter);
       setNewPlayer("");
@@ -311,6 +312,7 @@ export default function App() {
     setEditId(e.id);
     setEditText(e.name || "");
     setEditAmount(String(e.amount));
+    setEditDate(e.bet_date || betDayKey(e));
   }
   function saveEdit() {
     const id = editId;
@@ -319,6 +321,7 @@ export default function App() {
     const fields = { name };
     // Only change the amount if a valid positive number was entered.
     if (parsed > 0) fields.amount = parsed;
+    if (editDate) fields.bet_date = editDate; // change the day it's filed under
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...fields } : e)));
     setEditId(null);
     updateBet(id, fields).catch((err) => {
@@ -452,7 +455,6 @@ export default function App() {
       prev.map((e) => (ids.includes(e.id) ? { ...e, period_id: p.id } : e))
     );
     setSelectedDays(new Set());
-    setPeriodOffset(0);
     addPeriod(p)
       .then(() => assignPeriod(ids, p.id))
       .catch((err) => {
@@ -474,91 +476,62 @@ export default function App() {
   // Open (unsettled) bets, before the player filter — settling is global.
   const openEntries = useMemo(() => entries.filter((e) => !e.period_id), [entries]);
 
-  // Settled periods that actually have bets, oldest first, with a day-span label.
-  const settledPeriods = useMemo(() => {
-    const byId = new Map();
-    for (const e of entries) {
-      if (!e.period_id) continue;
-      const g = byId.get(e.period_id) || { id: e.period_id, days: new Set() };
-      g.days.add(betDayKey(e));
-      byId.set(e.period_id, g);
-    }
-    const metaById = new Map(periods.map((p) => [p.id, p]));
-    return [...byId.values()]
-      .map((g) => {
-        const meta = metaById.get(g.id);
-        const dayList = [...g.days].sort();
-        const startTxt = fmtMD(keyToDate(dayList[0]));
-        const endTxt = fmtMD(keyToDate(dayList[dayList.length - 1]));
-        return {
-          id: g.id,
-          time: meta ? new Date(meta.started_at).getTime() : 0,
-          label: startTxt === endTxt ? startTxt : `${startTxt} – ${endTxt}`,
-          settledOn: meta ? fmtMD(new Date(meta.started_at)) : "",
-        };
-      })
-      .sort((a, b) => a.time - b.time);
-  }, [entries, periods]);
+  // Period start times by id, for the "settled {date}" label.
+  const periodTime = useMemo(() => {
+    const m = new Map();
+    for (const p of periods) m.set(p.id, p.started_at);
+    return m;
+  }, [periods]);
 
-  // The viewed segment: settled periods (oldest→newest) then the open set (current).
-  const period = useMemo(() => {
-    const currentIdx = settledPeriods.length;
-    let idx = currentIdx + periodOffset;
-    if (idx < 0) idx = 0;
-    if (idx > currentIdx) idx = currentIdx;
-    const isOpen = idx === currentIdx;
-    const settled = isOpen ? null : settledPeriods[idx];
-    return { idx, currentIdx, isOpen, settled };
-  }, [settledPeriods, periodOffset]);
+  // The book respects the active player filter.
+  const visibleEntries = useMemo(
+    () => (filter ? entries.filter((e) => e.person === filter) : entries),
+    [entries, filter]
+  );
 
-  const periodLabel = period.isOpen ? "Open" : period.settled.label;
-  const periodSub = period.isOpen
-    ? "unsettled"
-    : period.settled.settledOn
-    ? `settled ${period.settled.settledOn}`
-    : "settled";
+  // Distinct bet-days present, newest first — the switcher steps through these.
+  const allDays = useMemo(() => {
+    const set = new Set(visibleEntries.map((e) => betDayKey(e)));
+    return [...set].sort().reverse();
+  }, [visibleEntries]);
 
-  // The book respects the active player filter; then scope to the viewed period.
-  const periodEntries = useMemo(() => {
-    const scoped = period.isOpen
-      ? openEntries
-      : entries.filter((e) => e.period_id === period.settled.id);
-    return filter ? scoped.filter((e) => e.person === filter) : scoped;
-  }, [entries, openEntries, period, filter]);
+  const dayIdx = Math.min(Math.max(dayIndex, 0), Math.max(allDays.length - 1, 0));
+  const viewedDay = allDays[dayIdx] || "";
 
-  // Group by the day each bet is filed under, ordered by the sort toggle.
-  const dayGroups = useMemo(() => {
-    const map = new Map();
-    for (const e of periodEntries) {
-      const key = betDayKey(e);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(e);
-    }
-    const groups = [...map.entries()].map(([key, list]) => {
-      const items = [...list].sort((a, b) => cmpEntries(a, b, sort));
-      let collect = 0, pay = 0;
-      for (const e of items) {
-        const s = settle(e.outcome, e.amount);
-        if (s.dir === "collect") collect += s.value;
-        else if (s.dir === "pay") pay += s.value;
-      }
-      const d = keyToDate(key);
-      return { key, items, net: collect - pay, label: fmtDayHead(d), time: d.getTime() };
-    });
-    groups.sort((a, b) => (sort === "new" ? b.time - a.time : a.time - b.time));
-    return groups;
-  }, [periodEntries, sort]);
+  // Bets on the viewed day (after the player filter), ordered by the sort toggle.
+  const periodEntries = useMemo(
+    () =>
+      visibleEntries
+        .filter((e) => betDayKey(e) === viewedDay)
+        .sort((a, b) => cmpEntries(a, b, sort)),
+    [visibleEntries, viewedDay, sort]
+  );
 
-  function toggleDay(key) {
-    setCollapsedDays((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
+  // Status of the viewed day across ALL bets (settling is global, not per player).
+  const dayInfo = useMemo(() => {
+    const all = entries.filter((e) => betDayKey(e) === viewedDay);
+    const open = all.filter((e) => !e.period_id);
+    const settledBet = all.find((e) => e.period_id);
+    const settledOn = settledBet ? periodTime.get(settledBet.period_id) : null;
+    return {
+      label: viewedDay ? fmtDayHead(keyToDate(viewedDay)) : "No bets yet",
+      openCount: open.length,
+      settledCount: all.length - open.length,
+      settledOn: settledOn ? fmtMD(new Date(settledOn)) : "",
+    };
+  }, [entries, viewedDay, periodTime]);
 
-  // Totals scope to the selected period (the open one by default).
+  const periodLabel = dayInfo.label;
+  const periodSub =
+    dayInfo.openCount && dayInfo.settledCount
+      ? "partly settled"
+      : dayInfo.settledCount
+      ? dayInfo.settledOn
+        ? `settled ${dayInfo.settledOn}`
+        : "settled"
+      : "open";
+
+  // Totals scope to the viewed day.
   const totals = useMemo(() => {
     let collect = 0, pay = 0, pending = 0;
     for (const e of periodEntries) {
@@ -642,6 +615,13 @@ export default function App() {
               autoFocus
             />
             <div className="bk-edit-line2">
+              <input
+                type="date"
+                className="bk-input bk-edit-date"
+                value={editDate}
+                onChange={(ev) => setEditDate(ev.target.value)}
+                aria-label="Bet day"
+              />
               <div className="bk-edit-money">
                 <span className="bk-edit-prefix">$</span>
                 <input
@@ -653,6 +633,8 @@ export default function App() {
                   aria-label="Bet amount"
                 />
               </div>
+            </div>
+            <div className="bk-edit-line2">
               <button className="bk-edit-save" type="submit">Save</button>
               <button className="bk-edit-cancel" type="button" onClick={() => setEditId(null)}>
                 Cancel
@@ -1052,38 +1034,60 @@ export default function App() {
 
         {/* Lines */}
         <section>
-          {/* Period switcher */}
+          {/* Day switcher — one bet-day at a time, newest first */}
           <div className="bk-week">
             <button
               className="bk-week-nav"
-              onClick={() => setPeriodOffset((o) => o - 1)}
-              disabled={period.idx === 0}
-              aria-label="Previous period"
+              onClick={() => setDayIndex(Math.min(dayIdx + 1, allDays.length - 1))}
+              disabled={dayIdx >= allDays.length - 1}
+              aria-label="Older day"
             >
               ‹
             </button>
             <button
               className="bk-week-label"
-              onClick={() => setPeriodOffset(0)}
-              title="Jump to the current period"
+              onClick={() => setDayIndex(0)}
+              title="Jump to the latest day"
             >
               <span className="bk-week-range">{periodLabel}</span>
               <span className="bk-week-sub">{periodSub}</span>
             </button>
             <button
               className="bk-week-nav"
-              onClick={() => setPeriodOffset((o) => o + 1)}
-              disabled={period.isOpen}
-              aria-label="Next period"
+              onClick={() => setDayIndex(Math.max(dayIdx - 1, 0))}
+              disabled={dayIdx <= 0}
+              aria-label="Newer day"
             >
               ›
             </button>
           </div>
 
+          {/* Settle this day (only when not filtered and the day has open bets) */}
+          {!filter && dayInfo.openCount > 0 && (
+            <label className="bk-settle-day">
+              <input
+                type="checkbox"
+                className="bk-day-check"
+                checked={selectedDays.has(viewedDay)}
+                onChange={() => toggleDaySelect(viewedDay)}
+              />
+              <span className="bk-settle-day-txt">
+                Settle this day
+                {dayInfo.settledCount > 0 && " (open bets)"}
+              </span>
+            </label>
+          )}
+
           {periodEntries.length > 0 && (
             <div className="bk-list-head">
               <span className="bk-list-count">
-                {periodEntries.length} {periodEntries.length === 1 ? "bet" : "bets"} this period
+                {periodEntries.length} {periodEntries.length === 1 ? "bet" : "bets"}
+                {totals.net !== 0 && (
+                  <span className={cx("bk-list-net mono", totals.net > 0 ? "bk-pos" : "bk-neg")}>
+                    {totals.net > 0 ? " +" : " "}
+                    {money(Math.abs(totals.net))}
+                  </span>
+                )}
               </span>
               <div className="bk-sort" role="group" aria-label="Sort by date">
                 <button className={cx(sort === "new" && "on")} onClick={() => setSort("new")}>
@@ -1099,59 +1103,16 @@ export default function App() {
           {loaded && periodEntries.length === 0 && (
             <div className="bk-empty">
               {filter
-                ? `No bets for ${filter} this period.`
-                : period.isOpen
-                ? "No bets in this period yet. Add one above to start."
-                : "No bets in this period."}
+                ? `No bets for ${filter} yet.`
+                : "No bets yet. Add one above to start."}
             </div>
           )}
-          {dayGroups.map((g) => {
-            const collapsed = collapsedDays.has(g.key);
-            const canSettle = period.isOpen && !filter;
-            const picked = selectedDays.has(g.key);
-            return (
-              <div className={cx("bk-day", canSettle && picked && "picked")} key={g.key}>
-                <div className="bk-day-head-row">
-                  {canSettle && (
-                    <input
-                      type="checkbox"
-                      className="bk-day-check"
-                      checked={picked}
-                      onChange={() => toggleDaySelect(g.key)}
-                      aria-label={`Select ${g.label} to settle`}
-                    />
-                  )}
-                  <button
-                    className="bk-day-head"
-                    onClick={() => toggleDay(g.key)}
-                    aria-expanded={!collapsed}
-                  >
-                    <span className="bk-day-date">{g.label}</span>
-                    <span className="bk-day-meta">
-                      <span className="bk-day-count">
-                        {g.items.length} {g.items.length === 1 ? "bet" : "bets"}
-                      </span>
-                      <span
-                        className={cx(
-                          "mono bk-day-net",
-                          g.net > 0 ? "bk-pos" : g.net < 0 ? "bk-neg" : "bk-zero"
-                        )}
-                      >
-                        {g.net > 0 ? "+" : ""}
-                        {money(Math.abs(g.net))}
-                      </span>
-                      <span className="bk-chev">{collapsed ? "▸" : "▾"}</span>
-                    </span>
-                  </button>
-                </div>
-                {!collapsed && <div className="bk-day-body">{g.items.map(renderEntry)}</div>}
-              </div>
-            );
-          })}
+
+          <div className="bk-day-body">{periodEntries.map(renderEntry)}</div>
         </section>
       </div>
 
-      {period.isOpen && !filter && selectedDays.size > 0 && (
+      {!filter && selectedDays.size > 0 && (
         <div className="bk-settle-bar">
           <span className="bk-settle-count">
             {selectedDays.size} day{selectedDays.size === 1 ? "" : "s"} selected
@@ -1240,9 +1201,12 @@ const CSS = `
 
 /* Day select-to-settle */
 .bk-day.picked{outline:1px solid var(--brass-dim); outline-offset:3px; border-radius:8px;}
-.bk-day-head-row{display:flex; align-items:center; gap:10px;}
-.bk-day-head-row .bk-day-head{flex:1; min-width:0;}
-.bk-day-check{width:18px; height:18px; flex-shrink:0; accent-color:var(--brass); cursor:pointer;}
+.bk-day-check{width:26px; height:26px; flex-shrink:0; accent-color:var(--brass); cursor:pointer; margin:0;}
+@media (pointer:coarse){ .bk-day-check{width:30px; height:30px;} }
+.bk-settle-day{display:flex; align-items:center; gap:12px; margin:0 0 14px; padding:11px 14px;
+  border:1px solid var(--brass-dim); border-radius:11px; background:rgba(203,162,78,.08); cursor:pointer;}
+.bk-settle-day-txt{font-size:.84rem; color:var(--brass); font-weight:600;}
+.bk-list-net{font-weight:600;}
 
 .bk-settle-bar{position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:35;
   display:flex; align-items:center; gap:16px; max-width:520px; width:calc(100% - 36px);
@@ -1453,9 +1417,10 @@ const CSS = `
 .bk-edit-prefix{position:absolute; left:11px; top:50%; transform:translateY(-50%);
   color:var(--dim); font-family:var(--mono); pointer-events:none;}
 .bk-edit-money .bk-edit-amt{padding-left:24px;}
-.bk-edit-save{flex-shrink:0; padding:0 14px; border:1px solid var(--brass); border-radius:8px;
+.bk-edit-date{flex:1; min-width:0; color-scheme:dark;}
+.bk-edit-save{flex:1; padding:10px; border:1px solid var(--brass); border-radius:8px;
   background:rgba(203,162,78,.16); color:var(--brass); font-weight:700; font-size:.78rem; cursor:pointer; font-family:var(--sans);}
-.bk-edit-cancel{flex-shrink:0; padding:0 14px; border:1px solid var(--line2); border-radius:8px;
+.bk-edit-cancel{flex:1; padding:10px; border:1px solid var(--line2); border-radius:8px;
   background:transparent; color:var(--dim); font-size:.78rem; cursor:pointer; font-family:var(--sans);}
 .bk-confirm{display:flex; gap:5px; flex-shrink:0;}
 .bk-confirm button{padding:6px 10px; border-radius:7px; font-size:.68rem; font-weight:700; cursor:pointer;
