@@ -87,6 +87,16 @@ const OUTCOMES = [
   { key: "lose", label: "Lose", tone: "lose" },
 ];
 
+// Spelled-out result labels for the printed statement.
+const PRINT_LABEL = {
+  win: "Win",
+  halfwin: "½ Win",
+  halflose: "½ Lose",
+  lose: "Lose",
+  push: "Even",
+  pending: "Pending",
+};
+
 // One editable line in the bulk add form. All rows in a save share the same person.
 let rowSeq = 0;
 const makeRow = () => ({ key: `r${rowSeq++}`, note: "", ratioSign: "+", ratio: "", mult: 100, amount: "" });
@@ -402,6 +412,12 @@ export default function App() {
     return { collect, pay, net: collect - pay, count: visibleEntries.length, pending };
   }, [visibleEntries]);
 
+  // The player's full ledger for the printed PDF statement, oldest first.
+  const printBets = useMemo(
+    () => (filter ? [...visibleEntries].sort((a, b) => cmpEntries(a, b, "old")) : []),
+    [filter, visibleEntries]
+  );
+
   const netCls = totals.net > 0 ? "bk-pos" : totals.net < 0 ? "bk-neg" : "bk-zero";
   const netSign = totals.net > 0 ? "+" : "";
 
@@ -674,9 +690,14 @@ export default function App() {
             <span>
               Showing <strong>{filter}</strong>
             </span>
-            <button className="bk-filter-clear" onClick={() => setFilter(null)}>
-              ✕ all players
-            </button>
+            <span className="bk-filter-actions">
+              <button className="bk-pdf-btn" onClick={() => window.print()}>
+                ⬇ PDF
+              </button>
+              <button className="bk-filter-clear" onClick={() => setFilter(null)}>
+                ✕ all
+              </button>
+            </span>
           </div>
         )}
 
@@ -945,6 +966,80 @@ export default function App() {
           })}
         </section>
       </div>
+
+      {/* Printable per-player statement (only visible when printing). */}
+      {filter && (
+        <div className="bk-print">
+          <div className="bk-print-head">
+            <div className="bk-print-title">{filter}</div>
+            <div className="bk-print-sub">
+              Bet statement · {new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(new Date())}
+            </div>
+          </div>
+
+          <table className="bk-print-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Note</th>
+                <th className="num">Bet</th>
+                <th>Result</th>
+                <th className="num">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {printBets.map((e) => {
+                const s = settle(e.outcome, e.amount);
+                const isPay = s.dir === "pay"; // player win → green (we owe them)
+                const isCollect = s.dir === "collect"; // player lose → red (they owe us)
+                const cls = isPay ? "pos" : isCollect ? "neg" : "";
+                const amt =
+                  s.dir === "pending"
+                    ? "—"
+                    : s.dir === "even"
+                    ? money(0)
+                    : (isPay ? "+" : "−") + money(s.value);
+                return (
+                  <tr key={e.id}>
+                    <td>{fmtDate(e.created_at)}</td>
+                    <td>{e.name || "—"}</td>
+                    <td className="num">{money(e.amount)}</td>
+                    <td className={cls}>{PRINT_LABEL[e.outcome] || e.outcome}</td>
+                    <td className={cx("num", cls)}>{amt}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          <div className="bk-print-totals">
+            <div>
+              Player won: <span className="pos">+{money(totals.pay)}</span>
+            </div>
+            <div>
+              Player lost: <span className="neg">−{money(totals.collect)}</span>
+            </div>
+            <div className="bk-print-net">
+              {totals.net > 0 ? (
+                <>
+                  {filter} owes: <span className="neg">{money(totals.net)}</span>
+                </>
+              ) : totals.net < 0 ? (
+                <>
+                  Owed to {filter}: <span className="pos">{money(-totals.net)}</span>
+                </>
+              ) : (
+                <>Settled — $0.00</>
+              )}
+            </div>
+            {totals.pending > 0 && (
+              <div className="bk-print-pending">
+                ({totals.pending} bet{totals.pending === 1 ? "" : "s"} still unsettled)
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1014,6 +1109,34 @@ const CSS = `
 .bk-filter-clear{background:transparent; border:none; color:var(--faint); cursor:pointer;
   font-size:.74rem; font-family:var(--sans); font-weight:600;}
 .bk-filter-clear:hover{color:var(--lose);}
+.bk-filter-actions{display:flex; align-items:center; gap:9px; flex-shrink:0;}
+.bk-pdf-btn{border:1px solid var(--brass-dim); background:rgba(203,162,78,.14); color:var(--brass);
+  border-radius:8px; padding:5px 11px; font-size:.74rem; font-weight:700; cursor:pointer; font-family:var(--sans);}
+.bk-pdf-btn:hover{border-color:var(--brass); background:rgba(203,162,78,.22);}
+
+/* Printable per-player statement — hidden on screen, shown when printing. */
+.bk-print{display:none;}
+@media print {
+  .bk-wrap, .bk-drawer, .bk-scrim{display:none !important;}
+  .bk{background:#fff !important; min-height:0;}
+  .bk-print{display:block !important; color:#15120e;}
+  .bk-print, .bk-print *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+  .bk-print-head{border-bottom:2px solid #15120e; padding-bottom:10px; margin-bottom:16px;}
+  .bk-print-title{font-size:22px; font-weight:800;}
+  .bk-print-sub{font-size:12px; color:#666; margin-top:3px;}
+  .bk-print-table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  .bk-print-table th{text-align:left; border-bottom:1px solid #999; padding:6px 8px;
+    font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:#444;}
+  .bk-print-table td{padding:6px 8px; border-bottom:1px solid #e4e0d6; vertical-align:top;}
+  .bk-print-table .num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .bk-print .pos{color:#1a7f3c !important; font-weight:700;}
+  .bk-print .neg{color:#c0392b !important; font-weight:700;}
+  .bk-print-totals{margin-top:16px; padding-top:12px; border-top:2px solid #15120e;
+    font-size:13px; line-height:1.7;}
+  .bk-print-net{font-size:16px; font-weight:800; margin-top:6px;}
+  .bk-print-pending{font-size:11px; color:#888; margin-top:4px;}
+  @page{margin:14mm;}
+}
 
 .bk-select{appearance:none; -webkit-appearance:none; cursor:pointer; padding-right:36px;
   background:var(--panel2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23A89C89' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 13px center;}
