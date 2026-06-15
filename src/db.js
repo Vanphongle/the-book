@@ -65,6 +65,15 @@ export async function insertBet(entry) {
   if (error) throw error;
 }
 
+export async function updateBetNote(id, name) {
+  if (!isSupabaseConfigured) {
+    lsWrite(lsRead().map((e) => (e.id === id ? { ...e, name } : e)));
+    return;
+  }
+  const { error } = await supabase.from(TABLE).update({ name }).eq("id", id);
+  if (error) throw error;
+}
+
 export async function updateBetOutcome(id, outcome) {
   if (!isSupabaseConfigured) {
     lsWrite(lsRead().map((e) => (e.id === id ? { ...e, outcome } : e)));
@@ -110,4 +119,18 @@ export async function insertPlayer(player) {
   }
   const { error } = await supabase.from(PLAYERS_TABLE).insert({ id: player.id, name: player.name });
   if (error) throw error;
+}
+
+// ---- realtime ----------------------------------------------------------------
+// Subscribe to any change on the bets/players tables (insert/update/delete) from
+// any device. Calls onChange() on each event. Returns an unsubscribe function.
+// No-op (returns a noop) when Supabase isn't configured.
+export function subscribeChanges(onChange) {
+  if (!isSupabaseConfigured) return () => {};
+  const channel = supabase
+    .channel("the-book-changes")
+    .on("postgres_changes", { event: "*", schema: "public", table: TABLE }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: PLAYERS_TABLE }, onChange)
+    .subscribe();
+  return () => supabase.removeChannel(channel);
 }

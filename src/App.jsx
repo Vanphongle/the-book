@@ -3,10 +3,12 @@ import {
   fetchBets,
   insertBet,
   updateBetOutcome,
+  updateBetNote,
   deleteBet,
   clearBets,
   fetchPlayers,
   insertPlayer,
+  subscribeChanges,
 } from "./db";
 
 const NEW_PLAYER = "__new__";
@@ -63,7 +65,7 @@ const OUTCOMES = [
 
 // One editable line in the bulk add form. All rows in a save share the same person.
 let rowSeq = 0;
-const makeRow = () => ({ key: `r${rowSeq++}`, note: "", mult: 100, amount: "" });
+const makeRow = () => ({ key: `r${rowSeq++}`, note: "", ratio: "", mult: 100, amount: "" });
 
 export default function App() {
   const [entries, setEntries] = useState([]);
@@ -77,6 +79,8 @@ export default function App() {
   const [showEarnings, setShowEarnings] = useState(false);
   const [showAdd, setShowAdd] = useState(true);
   const [sort, setSort] = useState("new"); // "new" = newest first, "old" = oldest first
+  const [editId, setEditId] = useState(null); // bet whose note is being edited
+  const [editText, setEditText] = useState("");
   const [confirmId, setConfirmId] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
@@ -128,6 +132,24 @@ export default function App() {
       setNewPlayer("");
     }
   }, [filter]);
+
+  // Realtime: when any device adds/edits/deletes, re-pull so this screen stays in
+  // sync. Debounced so a bulk insert (many events) triggers a single refresh.
+  useEffect(() => {
+    let t;
+    const refresh = () => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        fetchBets().then(setEntries).catch((e) => console.error(e));
+        fetchPlayers().then(setPlayers).catch((e) => console.error(e));
+      }, 250);
+    };
+    const unsub = subscribeChanges(refresh);
+    return () => {
+      clearTimeout(t);
+      unsub();
+    };
+  }, []);
 
   // Drawer list = saved players ∪ any person already used on a bet (so legacy
   // names and pre-added players both show). Sorted, case-insensitive.
@@ -183,7 +205,8 @@ export default function App() {
     const created = valid.map((r, i) => ({
       id: stamp + i.toString(36) + Math.random().toString(36).slice(2, 5),
       person: p,
-      name: r.note.trim(),
+      // The +/- ratio is appended to the end of the note.
+      name: [r.note.trim(), r.ratio.trim()].filter(Boolean).join(" "),
       amount: (parseFloat(r.amount) || 0) * r.mult,
       outcome: "pending",
       // Stagger by 1ms per row so each bet has a distinct, ordered timestamp.
@@ -205,6 +228,21 @@ export default function App() {
     setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, outcome } : e)));
     updateBetOutcome(id, outcome).catch((err) => {
       setErr("Failed to update the bet.");
+      console.error(err);
+      resync();
+    });
+  }
+  function startEdit(e) {
+    setEditId(e.id);
+    setEditText(e.name || "");
+  }
+  function saveNote() {
+    const id = editId;
+    const name = editText.trim();
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, name } : e)));
+    setEditId(null);
+    updateBetNote(id, name).catch((err) => {
+      setErr("Failed to update the note.");
       console.error(err);
       resync();
     });
@@ -467,6 +505,13 @@ export default function App() {
                     value={r.note}
                     onChange={(ev) => updateRow(r.key, { note: ev.target.value })}
                   />
+                  <input
+                    className="bk-input bk-brow-ratio mono"
+                    placeholder="+/−"
+                    value={r.ratio}
+                    onChange={(ev) => updateRow(r.key, { ratio: ev.target.value })}
+                    aria-label="Ratio (appended to note)"
+                  />
                   {rows.length > 1 && (
                     <button
                       className="bk-brow-del"
@@ -589,15 +634,50 @@ export default function App() {
                       <button className="bk-confirm-no" onClick={() => setConfirmId(null)}>keep</button>
                     </div>
                   ) : (
-                    <button
-                      className="bk-del"
-                      onClick={() => setConfirmId(e.id)}
-                      aria-label="Delete entry"
-                    >
-                      ✕
-                    </button>
+                    <div className="bk-entry-tools">
+                      <button
+                        className="bk-edit"
+                        onClick={() => startEdit(e)}
+                        aria-label="Edit note"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        className="bk-del"
+                        onClick={() => setConfirmId(e.id)}
+                        aria-label="Delete entry"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   )}
                 </div>
+
+                {editId === e.id && (
+                  <form
+                    className="bk-edit-row"
+                    onSubmit={(ev) => {
+                      ev.preventDefault();
+                      saveNote();
+                    }}
+                  >
+                    <input
+                      className="bk-input"
+                      placeholder="Note / match"
+                      value={editText}
+                      onChange={(ev) => setEditText(ev.target.value)}
+                      autoFocus
+                    />
+                    <button className="bk-edit-save" type="submit">Save</button>
+                    <button
+                      className="bk-edit-cancel"
+                      type="button"
+                      onClick={() => setEditId(null)}
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                )}
 
                 <div className="bk-entry-meta">
                   <span className="bk-entry-sub mono">
@@ -765,6 +845,7 @@ const CSS = `
 .bk-brow{border:1px solid var(--line); border-radius:11px; padding:10px;}
 .bk-brow-top{display:flex; gap:8px; align-items:center;}
 .bk-brow-note{flex:1; min-width:0;}
+.bk-brow-ratio{flex:0 0 70px; min-width:0; text-align:center; padding-left:6px; padding-right:6px;}
 .bk-brow-del{width:34px; height:34px; flex-shrink:0; border:1px solid var(--line2); border-radius:8px;
   background:transparent; color:var(--faint); cursor:pointer; font-size:.8rem; line-height:1; transition:all .15s;}
 .bk-brow-del:hover{color:var(--lose); border-color:var(--lose);}
@@ -843,9 +924,19 @@ const CSS = `
 .bk-outcomes button.on-lose{border-color:var(--lose); background:var(--lose-bg); color:var(--lose);}
 .bk-outcomes button.on-even{border-color:var(--brass-dim); background:rgba(203,162,78,.14); color:var(--brass);}
 
+.bk-entry-tools{display:flex; gap:6px; flex-shrink:0;}
 .bk-del{width:30px; height:30px; flex-shrink:0; border:1px solid var(--line2); border-radius:8px; background:transparent;
   color:var(--faint); cursor:pointer; font-size:.85rem; line-height:1; transition:all .15s;}
 .bk-del:hover{color:var(--lose); border-color:var(--lose);}
+.bk-edit{width:30px; height:30px; flex-shrink:0; border:1px solid var(--line2); border-radius:8px; background:transparent;
+  color:var(--faint); cursor:pointer; font-size:.82rem; line-height:1; transition:all .15s;}
+.bk-edit:hover{color:var(--brass); border-color:var(--brass-dim);}
+.bk-edit-row{display:flex; gap:6px; margin:11px 0 2px;}
+.bk-edit-row .bk-input{flex:1; min-width:0;}
+.bk-edit-save{flex-shrink:0; padding:0 13px; border:1px solid var(--brass); border-radius:8px;
+  background:rgba(203,162,78,.16); color:var(--brass); font-weight:700; font-size:.78rem; cursor:pointer; font-family:var(--sans);}
+.bk-edit-cancel{flex-shrink:0; padding:0 13px; border:1px solid var(--line2); border-radius:8px;
+  background:transparent; color:var(--dim); font-size:.78rem; cursor:pointer; font-family:var(--sans);}
 .bk-confirm{display:flex; gap:5px; flex-shrink:0;}
 .bk-confirm button{padding:6px 10px; border-radius:7px; font-size:.68rem; font-weight:700; cursor:pointer;
   border:1px solid var(--line2); font-family:var(--sans);}
@@ -870,6 +961,7 @@ const CSS = `
   .bk-outcomes button{padding:13px 4px;}
   .bk-mult button{padding:12px 11px;}
   .bk-del{width:38px; height:38px; font-size:.95rem;}
+  .bk-edit{width:38px; height:38px; font-size:.92rem;}
   .bk-clear{padding:9px 14px;}
 }
 `;

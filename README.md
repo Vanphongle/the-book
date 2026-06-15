@@ -1,7 +1,8 @@
 # The Book
 
-A quick bet-settlement calculator. Each bet line is saved to **Supabase**; the app
-deploys to **Vercel**. Built with Vite + React.
+A quick bet-settlement calculator. Each bet line is saved to **Supabase** and syncs
+**live across devices** (Supabase Realtime); the app deploys to **Vercel**. Built
+with Vite + React.
 
 Each bet is saved first (unsettled), then you pick its result on the card. The
 typed amount is multiplied by your chosen **×1 / ×10 / ×100** at save time.
