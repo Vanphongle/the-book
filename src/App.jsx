@@ -65,7 +65,7 @@ const OUTCOMES = [
 
 // One editable line in the bulk add form. All rows in a save share the same person.
 let rowSeq = 0;
-const makeRow = () => ({ key: `r${rowSeq++}`, note: "", ratio: "", mult: 100, amount: "" });
+const makeRow = () => ({ key: `r${rowSeq++}`, note: "", ratioSign: "+", ratio: "", mult: 100, amount: "" });
 
 export default function App() {
   const [entries, setEntries] = useState([]);
@@ -202,18 +202,21 @@ export default function App() {
     if (person === NEW_PLAYER && p) addPlayer(p);
     const base = Date.now();
     const stamp = base.toString(36);
-    const created = valid.map((r, i) => ({
-      id: stamp + i.toString(36) + Math.random().toString(36).slice(2, 5),
-      person: p,
-      // The +/- ratio is appended to the end of the note.
-      name: [r.note.trim(), r.ratio.trim()].filter(Boolean).join(" "),
-      amount: (parseFloat(r.amount) || 0) * r.mult,
-      outcome: "pending",
-      // Stagger by 1ms per row so each bet has a distinct, ordered timestamp.
-      // Identical created_at values let the DB return ties in random order on
-      // reload (the "shuffle"). Row 0 stays the newest, so it sits on top.
-      created_at: new Date(base - i).toISOString(),
-    }));
+    const created = valid.map((r, i) => {
+      // The signed +/- ratio is appended to the end of the note.
+      const ratio = r.ratio.trim() ? `${r.ratioSign}${r.ratio.trim()}` : "";
+      return {
+        id: stamp + i.toString(36) + Math.random().toString(36).slice(2, 5),
+        person: p,
+        name: [r.note.trim(), ratio].filter(Boolean).join(" "),
+        amount: (parseFloat(r.amount) || 0) * r.mult,
+        outcome: "pending",
+        // Stagger by 1ms per row so each bet has a distinct, ordered timestamp.
+        // Identical created_at values let the DB return ties in random order on
+        // reload (the "shuffle"). Row 0 stays the newest, so it sits on top.
+        created_at: new Date(base - i).toISOString(),
+      };
+    });
     setEntries((prev) => [...created, ...prev]); // optimistic
     setPerson(filter || ""); // keep the filtered player prefilled for the next bet
     setNewPlayer("");
@@ -505,9 +508,20 @@ export default function App() {
                     value={r.note}
                     onChange={(ev) => updateRow(r.key, { note: ev.target.value })}
                   />
+                  <button
+                    type="button"
+                    className={cx("bk-ratio-sign", r.ratioSign === "-" && "minus")}
+                    onClick={() =>
+                      updateRow(r.key, { ratioSign: r.ratioSign === "+" ? "-" : "+" })
+                    }
+                    aria-label="Toggle ratio sign"
+                  >
+                    {r.ratioSign === "+" ? "+" : "−"}
+                  </button>
                   <input
                     className="bk-input bk-brow-ratio mono"
-                    placeholder="+/−"
+                    inputMode="decimal"
+                    placeholder="ratio"
                     value={r.ratio}
                     onChange={(ev) => updateRow(r.key, { ratio: ev.target.value })}
                     aria-label="Ratio (appended to note)"
@@ -845,7 +859,12 @@ const CSS = `
 .bk-brow{border:1px solid var(--line); border-radius:11px; padding:10px;}
 .bk-brow-top{display:flex; gap:8px; align-items:center;}
 .bk-brow-note{flex:1; min-width:0;}
-.bk-brow-ratio{flex:0 0 70px; min-width:0; text-align:center; padding-left:6px; padding-right:6px;}
+.bk-ratio-sign{flex:0 0 40px; align-self:stretch; border:1px solid var(--line2); border-radius:10px;
+  background:var(--panel2); color:var(--brass); font-size:1.15rem; font-weight:700; line-height:1;
+  cursor:pointer; font-family:var(--mono); transition:all .13s;}
+.bk-ratio-sign:hover{border-color:var(--faint);}
+.bk-ratio-sign.minus{color:var(--lose);}
+.bk-brow-ratio{flex:0 0 58px; min-width:0; text-align:center; padding-left:6px; padding-right:6px;}
 .bk-brow-del{width:34px; height:34px; flex-shrink:0; border:1px solid var(--line2); border-radius:8px;
   background:transparent; color:var(--faint); cursor:pointer; font-size:.8rem; line-height:1; transition:all .15s;}
 .bk-brow-del:hover{color:var(--lose); border-color:var(--lose);}
