@@ -287,6 +287,8 @@ export default function App() {
         outcome: "pending",
         bet_date: betDate, // the day this bet is filed under (chosen above)
         period_id: "", // open / unsettled until you settle its day
+        seq: base + i, // monotonic append order: row 0 < row 1 < … and later saves are larger
+
         // Stagger by 1ms per row so each bet has a distinct, ordered timestamp.
         // Identical created_at values let the DB return ties in random order on
         // reload (the "shuffle"). Row 0 stays the newest, so it sits on top.
@@ -593,11 +595,15 @@ export default function App() {
   }, [periodEntries]);
 
   // The player's ledger for the printed PDF statement (this period), oldest first.
+  // PDF order: by day, then by the append sequence (the order you entered them).
   const printBets = useMemo(
     () =>
       filter
         ? [...periodEntries].sort(
-            (a, b) => betDayKey(a).localeCompare(betDayKey(b)) || cmpEntries(a, b, "old")
+            (a, b) =>
+              betDayKey(a).localeCompare(betDayKey(b)) ||
+              (a.seq || 0) - (b.seq || 0) ||
+              (a.id || "").localeCompare(b.id || "")
           )
         : [],
     [filter, periodEntries]
@@ -991,9 +997,10 @@ export default function App() {
             )}
           </label>
           <div className="bk-rows">
-            {rows.map((r) => (
+            {rows.map((r, i) => (
               <div className="bk-brow" key={r.key}>
                 <div className="bk-brow-top">
+                  <span className="bk-brow-num">{i + 1}</span>
                   <input
                     className="bk-input bk-brow-note"
                     placeholder="Note / match (optional)"
@@ -1379,6 +1386,8 @@ const CSS = `
 .bk-rows{display:flex; flex-direction:column; gap:8px; margin-top:12px;}
 .bk-brow{border:1px solid var(--line); border-radius:11px; padding:10px;}
 .bk-brow-top{display:flex; gap:8px; align-items:center;}
+.bk-brow-num{flex-shrink:0; min-width:18px; text-align:center; font-family:var(--mono);
+  font-size:.78rem; font-weight:700; color:var(--brass-dim);}
 .bk-brow-note{flex:1; min-width:0;}
 .bk-ratio-sign{flex:0 0 40px; align-self:stretch; border:1px solid var(--line2); border-radius:10px;
   background:var(--panel2); color:var(--brass); font-size:1.15rem; font-weight:700; line-height:1;

@@ -39,6 +39,7 @@ const rowToEntry = (r) => ({
   outcome: r.outcome,
   bet_date: r.bet_date || "",
   period_id: r.period_id || "",
+  seq: r.seq != null ? Number(r.seq) : 0,
   created_at: r.created_at || "",
 });
 
@@ -66,6 +67,7 @@ export async function insertBet(entry) {
     outcome: entry.outcome,
     bet_date: entry.bet_date || null,
     period_id: entry.period_id || null,
+    seq: entry.seq,
     created_at: entry.created_at,
   });
   if (error) throw error;
