@@ -964,6 +964,10 @@ export default function App() {
                   <span className="v">{money(stakedAllTime)}</span>
                   <span className="k">bet all-time</span>
                 </div>
+                <div>
+                  <span className="v">{visibleEntries.length}</span>
+                  <span className="k">bets all-time</span>
+                </div>
               </div>
             </div>
           )}
