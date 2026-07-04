@@ -592,23 +592,24 @@ export default function App() {
 
   // Totals scope to the viewed day.
   const totals = useMemo(() => {
-    let collect = 0, pay = 0, pending = 0, even = 0, staked = 0;
+    let collect = 0, pay = 0, pending = 0, even = 0, evenAmount = 0, staked = 0;
     for (const e of periodEntries) {
       staked += e.amount; // total amount bet (turnover) for the viewed day/week
       const s = settle(e.outcome, e.amount);
       if (s.dir === "collect") collect += s.value;
       else if (s.dir === "pay") pay += s.value;
       else if (s.dir === "pending") pending += 1;
-      else if (s.dir === "even") even += 1;
+      else if (s.dir === "even") { even += 1; evenAmount += e.amount; }
     }
-    return { collect, pay, net: collect - pay, count: periodEntries.length, pending, even, staked };
+    return { collect, pay, net: collect - pay, count: periodEntries.length, pending, even, evenAmount, staked };
   }, [periodEntries]);
 
-  // All-time count of even (push) bets — respects the active player filter.
-  const evenAllTime = useMemo(
-    () => visibleEntries.filter((e) => settle(e.outcome, e.amount).dir === "even").length,
-    [visibleEntries]
-  );
+  // All-time total amount bet on even (push) bets — respects the active player filter.
+  const evenAllTime = useMemo(() => {
+    let amt = 0;
+    for (const e of visibleEntries) if (settle(e.outcome, e.amount).dir === "even") amt += e.amount;
+    return amt;
+  }, [visibleEntries]);
 
   // Total amount bet across all time (respects the active player filter).
   const stakedAllTime = useMemo(
@@ -964,7 +965,7 @@ export default function App() {
                   </div>
                 )}
                 <div>
-                  <span className="v" style={{ color: "var(--dim)" }}>{totals.even}</span>
+                  <span className="v" style={{ color: "var(--dim)" }}>{money(totals.evenAmount)}</span>
                   <span className="k">even this {viewMode}</span>
                 </div>
                 <div>
@@ -980,7 +981,7 @@ export default function App() {
                   <span className="k">bets all-time</span>
                 </div>
                 <div>
-                  <span className="v" style={{ color: "var(--dim)" }}>{evenAllTime}</span>
+                  <span className="v" style={{ color: "var(--dim)" }}>{money(evenAllTime)}</span>
                   <span className="k">even all-time</span>
                 </div>
               </div>
