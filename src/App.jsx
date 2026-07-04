@@ -184,23 +184,31 @@ export default function App() {
     }
   }, [filter]);
 
-  // Realtime: when any device adds/edits/deletes, re-pull so this screen stays in
-  // sync. Debounced so a bulk insert (many events) triggers a single refresh.
+  // Realtime: apply each change to local state directly (no re-downloading the
+  // whole table on every edit). On (re)connect we do one full catch-up pull so
+  // nothing missed while offline is lost.
   useEffect(() => {
-    let t;
-    const refresh = () => {
-      clearTimeout(t);
-      t = setTimeout(() => {
+    const setters = { bet: setEntries, player: setPlayers, period: setPeriods };
+    const unsub = subscribeChanges(
+      (kind, event, row) => {
+        const setState = setters[kind];
+        if (!setState || !row || !row.id) return;
+        setState((prev) => {
+          if (event === "DELETE") return prev.filter((x) => x.id !== row.id);
+          const i = prev.findIndex((x) => x.id === row.id);
+          if (i === -1) return [row, ...prev]; // INSERT (order handled by the view)
+          const next = prev.slice();
+          next[i] = row; // UPDATE
+          return next;
+        });
+      },
+      () => {
         fetchBets().then(setEntries).catch((e) => console.error(e));
         fetchPlayers().then(setPlayers).catch((e) => console.error(e));
         fetchPeriods().then(setPeriods).catch((e) => console.error(e));
-      }, 250);
-    };
-    const unsub = subscribeChanges(refresh);
-    return () => {
-      clearTimeout(t);
-      unsub();
-    };
+      }
+    );
+    return unsub;
   }, []);
 
   // Drawer list = saved players ∪ any person already used on a bet (so legacy

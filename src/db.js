@@ -44,14 +44,23 @@ const rowToEntry = (r) => ({
 });
 
 // ---- public API --------------------------------------------------------------
+// PostgREST caps each request at 1000 rows, so page through until we have them
+// all — otherwise the oldest bets beyond 1000 silently never load.
+const PAGE = 1000;
 export async function fetchBets() {
   if (!isSupabaseConfigured) return lsRead();
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select("*")
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data || []).map(rowToEntry);
+  let all = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("*")
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE) break;
+  }
+  return all.map(rowToEntry);
 }
 
 export async function insertBet(entry) {
@@ -188,13 +197,25 @@ export async function addPeriod(period) {
 // Subscribe to any change on the bets/players tables (insert/update/delete) from
 // any device. Calls onChange() on each event. Returns an unsubscribe function.
 // No-op (returns a noop) when Supabase isn't configured.
-export function subscribeChanges(onChange) {
+// onChange(kind, eventType, row) is called per row change (row already mapped;
+// for DELETE, row holds at least the id). onResync() fires whenever the socket
+// (re)connects, so callers can catch up on anything missed while offline.
+export function subscribeChanges(onChange, onResync) {
   if (!isSupabaseConfigured) return () => {};
+  const rowOf = (p, map) => (p.new && p.new.id ? map(p.new) : p.old);
   const channel = supabase
     .channel("the-book-changes")
-    .on("postgres_changes", { event: "*", schema: "public", table: TABLE }, onChange)
-    .on("postgres_changes", { event: "*", schema: "public", table: PLAYERS_TABLE }, onChange)
-    .on("postgres_changes", { event: "*", schema: "public", table: PERIODS_TABLE }, onChange)
-    .subscribe();
+    .on("postgres_changes", { event: "*", schema: "public", table: TABLE }, (p) =>
+      onChange("bet", p.eventType, rowOf(p, rowToEntry))
+    )
+    .on("postgres_changes", { event: "*", schema: "public", table: PLAYERS_TABLE }, (p) =>
+      onChange("player", p.eventType, rowOf(p, playerRowToObj))
+    )
+    .on("postgres_changes", { event: "*", schema: "public", table: PERIODS_TABLE }, (p) =>
+      onChange("period", p.eventType, rowOf(p, (r) => ({ id: r.id, started_at: r.started_at })))
+    )
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") onResync && onResync();
+    });
   return () => supabase.removeChannel(channel);
 }
