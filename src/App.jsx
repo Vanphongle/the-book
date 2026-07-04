@@ -592,15 +592,22 @@ export default function App() {
 
   // Totals scope to the viewed day.
   const totals = useMemo(() => {
-    let collect = 0, pay = 0, pending = 0;
+    let collect = 0, pay = 0, pending = 0, staked = 0;
     for (const e of periodEntries) {
+      staked += e.amount; // total amount bet (turnover) for the viewed day/week
       const s = settle(e.outcome, e.amount);
       if (s.dir === "collect") collect += s.value;
       else if (s.dir === "pay") pay += s.value;
       else if (s.dir === "pending") pending += 1;
     }
-    return { collect, pay, net: collect - pay, count: periodEntries.length, pending };
+    return { collect, pay, net: collect - pay, count: periodEntries.length, pending, staked };
   }, [periodEntries]);
+
+  // Total amount bet across all time (respects the active player filter).
+  const stakedAllTime = useMemo(
+    () => visibleEntries.reduce((s, e) => s + e.amount, 0),
+    [visibleEntries]
+  );
 
   // The player's ledger for the printed PDF statement (this period), oldest first.
   // PDF order: by day, then by the append sequence (the order you entered them).
@@ -949,6 +956,14 @@ export default function App() {
                     <span className="k">unsettled</span>
                   </div>
                 )}
+                <div>
+                  <span className="v">{money(totals.staked)}</span>
+                  <span className="k">bet this {viewMode}</span>
+                </div>
+                <div>
+                  <span className="v">{money(stakedAllTime)}</span>
+                  <span className="k">bet all-time</span>
+                </div>
               </div>
             </div>
           )}
