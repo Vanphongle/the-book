@@ -52,6 +52,8 @@ const emptyBets = () => ({
   dontCome: emptyNums(),
   dontComeOdds: emptyNums(),
   place: emptyNums(),
+  buy: emptyNums(),
+  lay: emptyNums(),
   field: 0,
   hard: { 4: 0, 6: 0, 8: 0, 10: 0 },
   any7: 0,
@@ -64,10 +66,15 @@ const emptyBets = () => ({
   horn: 0,
 });
 
+const VIG = 0.05; // 5% commission on buy/lay wins
+
 const sumBets = (b, lucky) =>
   b.pass + b.passOdds + b.dontPass + b.dontPassOdds + b.comeFlat + b.dontComeFlat +
   b.field + b.any7 + b.anyCraps + b.two + b.three + b.eleven + b.twelve + b.ce + b.horn +
-  POINTS.reduce((s, n) => s + b.come[n] + b.comeOdds[n] + b.dontCome[n] + b.dontComeOdds[n] + b.place[n], 0) +
+  POINTS.reduce(
+    (s, n) => s + b.come[n] + b.comeOdds[n] + b.dontCome[n] + b.dontComeOdds[n] + b.place[n] + b.buy[n] + b.lay[n],
+    0
+  ) +
   [4, 6, 8, 10].reduce((s, n) => s + b.hard[n], 0) +
   (lucky.active || lucky.bet ? lucky.bet : 0);
 
@@ -363,14 +370,33 @@ export default function Craps() {
       if (b.dontCome[total]) { b.dontCome[total] = 0; b.dontComeOdds[total] = 0; events.push(`Don't Come ${total} loses`); }
     }
 
-    // ── place bets (working only with the point ON) ──
+    // ── place & buy bets (working only with the point ON) ──
     if (!comeOut) {
       if (total === 7) {
         if (POINTS.some((n) => b.place[n])) events.push("Place bets down");
-        for (const n of POINTS) b.place[n] = 0;
-      } else if (POINTS.includes(total) && b.place[total]) {
-        pay(`Place ${total}`, 0, b.place[total] * PLACE_PAY[total]); // stays up
+        if (POINTS.some((n) => b.buy[n])) events.push("Buy bets down");
+        for (const n of POINTS) { b.place[n] = 0; b.buy[n] = 0; }
+      } else if (POINTS.includes(total)) {
+        if (b.place[total]) pay(`Place ${total}`, 0, b.place[total] * PLACE_PAY[total]); // stays up
+        if (b.buy[total]) {
+          // true odds minus the 5% vig on the win; bet stays up
+          const win = b.buy[total] * ODDS_PAY[total] * (1 - VIG);
+          pay(`Buy ${total}`, 0, win);
+        }
       }
+    }
+
+    // ── lay bets (always working, even on the come-out) ──
+    if (total === 7) {
+      for (const n of POINTS) {
+        if (!b.lay[n]) continue;
+        const win = b.lay[n] * LAY_PAY[n] * (1 - VIG); // true odds against − 5% vig
+        pay(`Lay ${n}`, b.lay[n], win); // paid and taken down
+        b.lay[n] = 0;
+      }
+    } else if (POINTS.includes(total) && b.lay[total]) {
+      b.lay[total] = 0;
+      events.push(`Lay ${total} loses`);
     }
 
     // ── pass / don't pass & the point ──
@@ -599,19 +625,40 @@ export default function Craps() {
           <div className="cr-note">Come odds are OFF on the come-out (returned if the 7 wins for the pass).</div>
         </section>
 
-        {/* Place bets */}
+        {/* Place / Buy / Lay */}
         <section className="cr-zone">
-          <h2>Place bets {point ? "(working)" : "(off until point is ON)"}</h2>
+          <h2>Place · Buy · Lay {point ? "(place/buy working)" : "(place/buy off until point is ON · lay always works)"}</h2>
           <div className="cr-nums">
-            {POINTS.map((n) => (
-              <div key={n} className="cr-placewrap">
-                <Cell
-                  label={String(n)}
-                  sub={n === 4 || n === 10 ? "9:5" : n === 5 || n === 9 ? "7:5" : "7:6"}
-                  path={["place", n]} amt={bets.place[n]} tone="place"
-                />
-              </div>
-            ))}
+            {POINTS.map((n) => {
+              const placeRate = n === 4 || n === 10 ? "9:5" : n === 5 || n === 9 ? "7:5" : "7:6";
+              const buyRate = n === 4 || n === 10 ? "2:1" : n === 5 || n === 9 ? "3:2" : "6:5";
+              const layRate = n === 4 || n === 10 ? "1:2" : n === 5 || n === 9 ? "2:3" : "5:6";
+              const row = (kind, label, rate, amt) => (
+                <button className={cx("cr-pbl", kind, amt > 0 && "has")} onClick={() => place([kind, n])}>
+                  <span className="cr-pbl-k">{label}</span>
+                  <span className="cr-pbl-r">{rate}</span>
+                  {amt > 0 && (
+                    <span className="cr-pbl-amt">
+                      {money(amt)}
+                      <i className="cr-x" onClick={(e) => { e.stopPropagation(); removeBet([kind, n]); }}>✕</i>
+                    </span>
+                  )}
+                </button>
+              );
+              return (
+                <div key={n} className={cx("cr-num cr-pblcol", point === n && "ispoint")}>
+                  <div className="cr-num-title">{n}</div>
+                  {row("place", "PLACE", placeRate, bets.place[n])}
+                  {row("buy", "BUY", `${buyRate}−5%`, bets.buy[n])}
+                  {row("lay", "LAY", `${layRate}−5%`, bets.lay[n])}
+                </div>
+              );
+            })}
+          </div>
+          <div className="cr-note">
+            Buy pays true odds with a 5% vig taken on the win — better than Place on the 4 &amp; 10;
+            Place (7:6) beats Buy on the 6 &amp; 8. Lay bets win when the 7 rolls before the number
+            and are always working.
           </div>
         </section>
 
@@ -806,8 +853,21 @@ const CSS = `
 .cr-mini em{display:block; font-style:normal; color:var(--faint); font-size:.5rem;}
 .cr-mini.pass{border-color:var(--green);}
 .cr-mini.dont{border-color:var(--red);}
-.cr-placewrap .cr-cell{text-align:center; min-height:66px;}
-.cr-placewrap .cr-cell-label{font-family:var(--mono); font-size:1.05rem;}
+.cr-pblcol{min-height:0; padding:7px 4px 8px;}
+.cr-pbl{display:flex; flex-wrap:wrap; align-items:center; gap:2px 4px; width:100%; margin-top:4px;
+  border:1px solid var(--line2); border-radius:7px; background:var(--panel2); color:var(--ink);
+  font-size:.55rem; padding:4px 4px; cursor:pointer; line-height:1.3; justify-content:center;}
+.cr-pbl .cr-pbl-k{font-weight:800; letter-spacing:.03em;}
+.cr-pbl .cr-pbl-r{color:var(--faint);}
+.cr-pbl.place{border-color:var(--line2);}
+.cr-pbl.buy{border-color:#3a5f7a;}
+.cr-pbl.buy .cr-pbl-k{color:var(--blue);}
+.cr-pbl.lay{border-color:#6e3a3a;}
+.cr-pbl.lay .cr-pbl-k{color:var(--red);}
+.cr-pbl.has{border-color:var(--brass); background:rgba(203,162,78,.12);}
+.cr-pbl-amt{display:inline-flex; gap:4px; align-items:center; width:100%; justify-content:center;
+  font-family:var(--mono); font-weight:700; color:var(--brass); font-size:.6rem;}
+.cr-pbl-amt .cr-x{font-style:normal;}
 .cr-note{font-size:.64rem; color:var(--faint); margin-top:8px; line-height:1.5;}
 
 /* lucky shooter */
