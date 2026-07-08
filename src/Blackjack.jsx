@@ -98,6 +98,30 @@ function Card({ c, hidden, fresh }) {
   );
 }
 
+// A real-looking stack of casino chips for a given amount (denoms colored like
+// the rack; stack grows upward as the bet grows).
+const CHIP_COLOR = { 1: "#7a7a7a", 5: "#c0392b", 10: "#2471a3", 25: "#1e8449", 100: "#151515", 500: "#6c3483" };
+function ChipStack({ amt, small }) {
+  const den = [500, 100, 25, 10, 5, 1];
+  const list = [];
+  let rem = Math.round(amt);
+  for (const d of den) while (rem >= d && list.length < 10) { list.push(d); rem -= d; }
+  const shown = list.reverse(); // big denominations on top of the stack
+  const size = small ? 24 : 40;
+  const off = small ? 3 : 4.5;
+  const h = size + off * Math.max(0, shown.length - 1);
+  return (
+    <span className="bj-cstack" style={{ width: size, height: h }}>
+      {shown.map((d, i) => (
+        <i key={i} className="bj-cchip"
+          style={{ background: CHIP_COLOR[d], width: size, height: size, bottom: i * off, zIndex: i }}>
+          {i === shown.length - 1 && <em>${d}</em>}
+        </i>
+      ))}
+    </span>
+  );
+}
+
 export default function Blackjack() {
   const [bank, setBank] = useState(() => {
     const v = parseFloat(localStorage.getItem(LS_BANK));
@@ -426,7 +450,7 @@ export default function Blackjack() {
   const RES_TXT = { win: "WIN", lose: "LOSE", push: "PUSH", bj: "BLACKJACK", surr: "SURRENDER" };
 
   return (
-    <div className={cx("bj", ["player", "insurance", "done"].includes(g.phase) && "acting")}>
+    <div className={cx("bj", (["player", "insurance", "done"].includes(g.phase) || (g.phase === "bet" && (bet > 0 || g.lastBet > 0))) && "acting")}>
       <style>{CSS}</style>
       <header className="bj-top">
         <a className="bj-back" href="#">←</a>
@@ -504,7 +528,7 @@ export default function Blackjack() {
                   <span className={cx("bj-total", v.total > 21 && "bust")}>
                     {v.total}{v.soft && v.total <= 21 ? " soft" : ""}
                   </span>
-                  <span className="bj-betchip">{money(h.bet)}</span>
+                  <span className="bj-handbet"><ChipStack amt={h.bet} small /><u className="mono">{money(h.bet)}</u></span>
                   {h.result && <span className={cx("bj-res", h.result)}>{RES_TXT[h.result]}</span>}
                 </div>
               </div>
@@ -513,13 +537,30 @@ export default function Blackjack() {
           {!g.hands.length && <div className="bj-slot wide" />}
         </div>
       </section>
-      {/* side bets */}
+      {/* betting spots: pick a chip below, then tap a spot to place it */}
       <section className="bj-sides">
         {[
           ["pairs", "PERFECT PAIRS", "6:1 · 12:1 · 25:1"],
-          ["plus3", "21 + 3", "5:1 up to 100:1"],
-          ["match", "MATCH THE DEALER", "4:1 / suited 11:1"],
+          ["__main__"],
+          ["plus3", "21 + 3", "5:1 – 100:1"],
+          ["match", "MATCH DEALER", "4:1 / suited 11:1"],
         ].map(([k, lbl, pays]) => {
+          if (k === "__main__")
+            return (
+              <button
+                key={k}
+                className={cx("bj-mainspot", bet > 0 && "has")}
+                onClick={() => betting && bankRef.current >= bet + sides.match + sides.pairs + sides.plus3 + chip && setBet(bet + chip)}
+              >
+                <span className="bj-spot-ring">
+                  {bet > 0 ? <ChipStack amt={bet} /> : <em>BET</em>}
+                </span>
+                <span className="bj-spot-amt mono">{bet > 0 ? money(bet) : "tap to bet"}</span>
+                {bet > 0 && betting && (
+                  <i className="bj-spot-x" onClick={(e) => { e.stopPropagation(); setBet(0); }}>✕</i>
+                )}
+              </button>
+            );
           const r = g.sideResults ? g.sideResults[k] : undefined;
           const settled = r !== undefined && g.phase !== "bet";
           return (
@@ -528,13 +569,16 @@ export default function Blackjack() {
               className={cx("bj-side", sides[k] > 0 && "has", settled && (r ? "won" : "lost"))}
               onClick={() => betting && setSides((s) => ({ ...s, [k]: s[k] + chip }))}
             >
-              <span className="bj-side-lbl">{lbl}</span>
-              <span className="bj-side-pays">{pays}</span>
+              <span className="bj-side-info">
+                <b>{lbl}</b>
+                <i>{pays}</i>
+                {sides[k] > 0 && <u className="mono">{money(sides[k])}</u>}
+              </span>
               {sides[k] > 0 && (
-                <span className="bj-side-amt">
-                  {money(sides[k])}
+                <span className="bj-side-chips">
+                  <ChipStack amt={sides[k]} small />
                   {betting && (
-                    <i onClick={(e) => { e.stopPropagation(); setSides((s) => ({ ...s, [k]: 0 })); }}>✕</i>
+                    <i className="bj-spot-x side" onClick={(e) => { e.stopPropagation(); setSides((s) => ({ ...s, [k]: 0 })); }}>✕</i>
                   )}
                 </span>
               )}
@@ -575,21 +619,13 @@ export default function Blackjack() {
         </div>
       )}
 
-      {/* actions */}
-      <section className="bj-actions">
-        {betting && (
-          <>
-            <div className="bj-betbox">
-              <span className="bj-betlbl">BET</span>
-              <b className="mono">{money(bet || g.lastBet || 0)}</b>
-              {bet > 0 && <button className="bj-clearbet" onClick={() => setBet(0)}>clear</button>}
-            </div>
-            <button className="bj-btn deal" onClick={deal}>
-              {g.phase === "done" && !bet ? "REBET & DEAL" : "DEAL"}
-            </button>
-          </>
-        )}
-      </section>
+      {g.phase === "bet" && (bet > 0 || g.lastBet > 0) && (
+        <div className="bj-float">
+          <button className="bj-fab deal" onClick={deal}>
+            DEAL<small>{money(bet || g.lastBet)}</small>
+          </button>
+        </div>
+      )}
 
       {/* chip rack */}
       {betting && (
@@ -598,7 +634,7 @@ export default function Blackjack() {
             <button
               key={c}
               className={cx("bj-chip", `c${c}`, chip === c && "sel")}
-              onClick={() => { setChip(c); if (bankRef.current >= (bet + c)) setBet(bet + c); }}
+              onClick={() => setChip(c)}
             >
               ${c}
             </button>
@@ -706,23 +742,45 @@ const CSS = `
 .bj-res.lose{background:var(--red); color:#fff;}
 .bj-res.push,.bj-res.surr{background:#8fa3b8; color:#101820;}
 
-.bj-sides{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; padding:6px 0 12px;}
-.bj-side{position:relative; display:flex; flex-direction:column; align-items:center; gap:3px;
+/* betting spots — fixed heights so placing chips never shifts the layout */
+.bj-sides{display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap; padding:6px 0 12px;}
+.bj-side{position:relative; display:flex; flex-direction:row; align-items:center; gap:10px;
   border:2px dashed rgba(243,234,210,.4); border-radius:12px; background:rgba(0,0,0,.14);
-  color:var(--ink); padding:9px 14px; cursor:pointer; min-width:150px;}
+  color:var(--ink); padding:0 12px; cursor:pointer; min-width:160px; height:64px; justify-content:space-between;}
 .bj-side.has{border-style:solid; border-color:var(--yellow);}
 .bj-side.won{border-color:var(--green); box-shadow:0 0 10px rgba(99,214,139,.4);}
 .bj-side.lost{opacity:.6;}
-.bj-side-lbl{font-size:.6rem; font-weight:900; letter-spacing:.12em;}
-.bj-side-pays{font-size:.54rem; color:var(--dim);}
-.bj-side-amt{font-family:var(--mono); font-size:.66rem; font-weight:800; color:#241c05;
-  background:radial-gradient(circle at 40% 35%, #ffe9a8, #d4a940); border:2px dashed #8a6c1e;
-  border-radius:12px; padding:2px 8px; display:inline-flex; gap:5px; align-items:center;}
-.bj-side-amt i{font-style:normal; cursor:pointer; color:#5e4a12;}
+.bj-side-info{display:flex; flex-direction:column; gap:2px; text-align:left;}
+.bj-side-info b{font-size:.58rem; font-weight:900; letter-spacing:.1em;}
+.bj-side-info i{font-style:normal; font-size:.5rem; color:var(--dim);}
+.bj-side-info u{text-decoration:none; font-size:.62rem; color:var(--yellow); font-weight:800;}
+.bj-side-chips{display:flex; align-items:flex-end; gap:4px;}
 .bj-side-badge{position:absolute; top:-8px; right:-6px; font-size:.54rem; font-weight:900;
   border-radius:6px; padding:2px 6px; letter-spacing:.06em;}
 .bj-side-badge.w{background:var(--green); color:#06230f;}
 .bj-side-badge.l{background:var(--red); color:#fff;}
+
+/* main betting circle */
+.bj-mainspot{position:relative; display:flex; flex-direction:column; align-items:center; gap:4px;
+  background:transparent; border:none; cursor:pointer; color:var(--ink); width:110px;}
+.bj-spot-ring{width:84px; height:84px; border-radius:50%; border:3px dashed rgba(243,234,210,.55);
+  display:flex; align-items:flex-end; justify-content:center; padding-bottom:8px;}
+.bj-mainspot.has .bj-spot-ring{border-style:solid; border-color:var(--yellow);}
+.bj-spot-ring em{font-style:normal; align-self:center; font-size:.72rem; letter-spacing:.22em;
+  color:rgba(243,234,210,.6); font-weight:900;}
+.bj-spot-amt{font-size:.66rem; color:var(--yellow); font-weight:800;}
+.bj-spot-x{position:absolute; top:-4px; right:8px; font-style:normal; width:20px; height:20px;
+  border-radius:50%; background:rgba(0,0,0,.5); color:#e8b7b2; font-size:.62rem; display:flex;
+  align-items:center; justify-content:center; cursor:pointer;}
+.bj-spot-x.side{position:static; width:18px; height:18px;}
+
+/* chip stacks */
+.bj-cstack{position:relative; display:inline-block; flex-shrink:0;}
+.bj-cchip{position:absolute; left:0; border-radius:50%; border:2px dashed rgba(255,255,255,.6);
+  box-shadow:0 1px 3px rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; box-sizing:border-box;}
+.bj-cchip em{font-style:normal; color:#fff; font-size:.5rem; font-weight:900;}
+.bj-handbet{display:flex; align-items:flex-end; gap:5px;}
+.bj-handbet u{text-decoration:none; font-size:.62rem; color:var(--yellow); font-weight:800; font-family:var(--mono);}
 
 .bj-msg{padding:6px 18px; min-height:30px; font-size:.86rem; color:var(--yellow); font-weight:600; text-align:center;}
 .bj-msg.big{font-size:1rem;}
