@@ -198,6 +198,11 @@ export default function Blackjack() {
     g.roundNet = bankRef.current - (g.bankAtStart ?? bankRef.current);
     g.roundKey = Math.random(); // retriggers the pop animation
     g.phase = "done";
+    // busted (can't cover the smallest chip): auto-refill the play bankroll
+    if (bankRef.current < CHIPS[0]) {
+      payBank(START_BANK - bankRef.current);
+      g.msg += " · Busted — bankroll refilled to $1,000.";
+    }
   }
 
   // ── round flow ─────────────────────────────────────────────────────────────

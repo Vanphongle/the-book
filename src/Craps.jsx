@@ -488,6 +488,11 @@ export default function Craps() {
     commitLucky(L);
     setPoint(newPoint);
     if (credit > 0) commitBank(bankRef.current + credit);
+    // busted (can't cover the smallest chip, nothing left working): auto-refill
+    if (bankRef.current < CHIPS[0] && sumBets(b, L) === 0) {
+      commitBank(START_BANK);
+      events.push("Busted — bankroll refilled to $1,000");
+    }
     setLastWin(winnings);
     setHistory((h) => [{ d1, d2, total, mark }, ...h].slice(0, 16));
     say(events.length ? events : [`${total} — no action`]);
