@@ -349,20 +349,29 @@ export default function Blackjack() {
         <button className="bj-reset" onClick={resetBank}>Reset</button>
       </header>
 
-      {/* dealer */}
-      <section className="bj-dealer">
-        <div className="bj-row-label">
-          DEALER {dv && <b>{g.dealer.hidden ? dv.total + " +" : handValue(g.dealer.cards).total}</b>}
-        </div>
-        <div className="bj-cards">
-          {g.dealer.cards.map((c, i) => (
-            <Card key={c.id || i} c={c} hidden={g.dealer.hidden && i === 1} fresh={g.freshIds.has(c.id)} />
-          ))}
-          {!g.dealer.cards.length && <div className="bj-slot" />}
-        </div>
-      </section>
+      {/* table */}
+      <div className="bj-table">
+        <section className="bj-dealer">
+          <div className="bj-row-label">
+            DEALER {dv && <b>{g.dealer.hidden ? dv.total + " +" : handValue(g.dealer.cards).total}</b>}
+          </div>
+          <div className="bj-cards">
+            {g.dealer.cards.map((c, i) => (
+              <Card key={c.id || i} c={c} hidden={g.dealer.hidden && i === 1} fresh={g.freshIds.has(c.id)} />
+            ))}
+            {!g.dealer.cards.length && <div className="bj-slot" />}
+          </div>
+        </section>
 
-      <div className={cx("bj-msg", g.phase === "done" && "big")}>{g.msg}&nbsp;</div>
+        {/* felt lettering, like the printed table */}
+        <div className="bj-feltarc">
+          <span className="bj-feltline">BLACKJACK PAYS {pay32 ? "3 TO 2" : "6 TO 5"}</span>
+          <span className="bj-feltline small">
+            Dealer must draw to 16 and {h17 ? "hit soft 17" : "stand on all 17s"} · Insurance pays 2 to 1
+          </span>
+        </div>
+
+        <div className={cx("bj-msg", g.phase === "done" && "big")}>{g.msg}&nbsp;</div>
 
       {/* player hands */}
       <section className="bj-player">
@@ -389,6 +398,7 @@ export default function Blackjack() {
           {!g.hands.length && <div className="bj-slot wide" />}
         </div>
       </section>
+      </div>{/* /bj-table */}
 
       {/* actions */}
       <section className="bj-actions">
@@ -472,12 +482,21 @@ const CSS = `
 .bj-meters i{font-style:normal; font-size:.52rem; text-transform:uppercase; letter-spacing:.12em; color:#86ab8e;}
 .bj-reset{background:transparent; border:1px solid #3f6b4d; color:#9dbfa4; border-radius:8px; padding:6px 10px; font-size:.66rem; cursor:pointer;}
 
-.bj-dealer{padding:18px 16px 4px; min-height:150px;}
-.bj-player{padding:4px 16px; flex:1;}
-.bj-row-label{font-size:.6rem; letter-spacing:.2em; color:var(--dim); margin-bottom:8px; font-weight:800;}
+.bj-table{flex:1; display:flex; flex-direction:column; align-items:center; width:100%;
+  max-width:860px; margin:0 auto; padding:0 12px;}
+.bj-dealer{padding:20px 16px 4px; min-height:150px; display:flex; flex-direction:column; align-items:center;}
+.bj-player{padding:4px 16px 10px; width:100%; display:flex; justify-content:center;}
+.bj-row-label{font-size:.6rem; letter-spacing:.28em; color:var(--dim); margin-bottom:10px; font-weight:800; text-align:center;}
 .bj-row-label b{color:var(--yellow); margin-left:6px; font-family:var(--mono);}
 
-.bj-cards{display:flex; min-height:96px;}
+.bj-feltarc{display:flex; flex-direction:column; align-items:center; gap:4px; margin:8px 0 2px;
+  padding:10px 34px; border:2px solid rgba(243,234,210,.28); border-radius:50% / 100% 100% 0 0;
+  border-bottom:none;}
+.bj-feltline{font-family:Georgia,'Times New Roman',serif; font-style:italic; letter-spacing:.3em;
+  color:rgba(243,234,210,.75); font-size:.86rem; font-weight:700; text-align:center;}
+.bj-feltline.small{font-size:.56rem; letter-spacing:.18em; color:rgba(243,234,210,.5);}
+
+.bj-cards{display:flex; min-height:96px; justify-content:center;}
 .bj-slot{width:66px; height:94px; border:2px dashed rgba(243,234,210,.25); border-radius:9px;}
 .bj-slot.wide{width:140px;}
 
@@ -499,7 +518,7 @@ const CSS = `
   background:repeating-linear-gradient(45deg, #2e5280 0 6px, #27456b 6px 12px);}
 
 /* hands */
-.bj-hands{display:flex; gap:26px; flex-wrap:wrap; align-items:flex-end;}
+.bj-hands{display:flex; gap:26px; flex-wrap:wrap; align-items:flex-end; justify-content:center;}
 .bj-hand{padding:8px 10px 9px; border-radius:12px; border:2px solid transparent;}
 .bj-hand.live{border-color:var(--yellow); background:rgba(247,215,116,.07);}
 .bj-hand.win,.bj-hand.bj{border-color:var(--green);}
@@ -514,10 +533,10 @@ const CSS = `
 .bj-res.lose{background:var(--red); color:#fff;}
 .bj-res.push,.bj-res.surr{background:#8fa3b8; color:#101820;}
 
-.bj-msg{padding:6px 18px; min-height:30px; font-size:.86rem; color:var(--yellow); font-weight:600;}
+.bj-msg{padding:6px 18px; min-height:30px; font-size:.86rem; color:var(--yellow); font-weight:600; text-align:center;}
 .bj-msg.big{font-size:1rem;}
 
-.bj-actions{display:flex; gap:9px; padding:10px 16px; flex-wrap:wrap; align-items:center;}
+.bj-actions{display:flex; gap:9px; padding:10px 16px; flex-wrap:wrap; align-items:center; justify-content:center;}
 .bj-btn{padding:13px 20px; border-radius:11px; border:2px solid var(--linec); background:rgba(0,0,0,.25);
   color:var(--ink); font-weight:900; letter-spacing:.08em; font-size:.82rem; cursor:pointer;}
 .bj-btn:active{transform:translateY(1px);}
@@ -533,13 +552,14 @@ const CSS = `
 .bj-betbox b{font-size:1rem; color:var(--yellow);}
 .bj-clearbet{background:none; border:none; color:#9dbfa4; font-size:.66rem; cursor:pointer; text-decoration:underline;}
 
-.bj-rack{display:flex; align-items:center; gap:9px; padding:6px 16px 18px; flex-wrap:wrap;}
+.bj-rack{display:flex; align-items:center; gap:9px; padding:6px 16px 18px; flex-wrap:wrap;
+  justify-content:center; max-width:860px; margin:0 auto; width:100%;}
 .bj-chip{width:46px; height:46px; border-radius:50%; font-weight:800; cursor:pointer; color:#fff;
   border:3px dashed rgba(255,255,255,.6); font-size:.72rem;}
 .bj-chip.c5{background:#c0392b;} .bj-chip.c10{background:#2471a3;} .bj-chip.c25{background:#1e8449;}
 .bj-chip.c100{background:#111;} .bj-chip.c500{background:#6c3483;}
 .bj-chip.sel{outline:3px solid var(--yellow); outline-offset:2px;}
-.bj-settings{margin-left:auto; display:flex; gap:14px; align-items:center; flex-wrap:wrap;}
+.bj-settings{width:100%; display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center; margin-top:8px;}
 .bj-settings label{display:flex; gap:5px; align-items:center; font-size:.64rem; color:#9dbfa4; cursor:pointer;}
 .bj-settings select{background:#0f3d28; color:var(--ink); border:1px solid #3f6b4d; border-radius:6px; padding:3px 6px;}
 `;
