@@ -116,6 +116,7 @@ export default function Blackjack() {
   // it step by step); a tick forces re-render after each mutation.
   const G = useRef({
     shoe: newShoe(6),
+    discards: [], // cards seen since the last shuffle (for the count)
     phase: "bet", // bet | dealing | insurance | player | dealer | done
     dealer: { cards: [], hidden: true },
     hands: [], // {cards, bet, doubled, done, busted, surrendered, fromSplit, splitAces, result}
@@ -132,12 +133,27 @@ export default function Blackjack() {
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
 
+  const [showCount, setShowCount] = useState(false);
+
   const g = G.current;
   const cardsLeft = g.shoe.length;
   const cutCard = Math.floor(52 * decks * 0.25);
 
+  // ── shoe / counting info (Hi-Lo: 2-6 = +1 · 7-9 = 0 · 10s and aces = −1) ──
+  // The hidden hole card is NOT counted until revealed — true to real practice.
+  const hiLo = (c) =>
+    ["2", "3", "4", "5", "6"].includes(c.r) ? 1 : ["10", "J", "Q", "K", "A"].includes(c.r) ? -1 : 0;
+  let running = 0;
+  for (const c of g.discards || []) running += hiLo(c);
+  for (const h of g.hands) for (const c of h.cards) running += hiLo(c);
+  g.dealer.cards.forEach((c, i) => { if (!(g.dealer.hidden && i === 1)) running += hiLo(c); });
+  const shoeTotal = 52 * decks;
+  const dealtCount = shoeTotal - cardsLeft;
+  const decksLeft = cardsLeft / 52;
+  const trueCount = decksLeft > 0.25 ? running / decksLeft : running;
+
   function draw() {
-    if (!g.shoe.length) g.shoe = newShoe(decks); // safety: never run dry mid-hand
+    if (!g.shoe.length) { g.shoe = newShoe(decks); g.discards = []; } // never run dry mid-hand
     return g.shoe.pop();
   }
 
@@ -161,9 +177,14 @@ export default function Blackjack() {
     if (!b) { g.msg = "Add chips to bet first."; rr(); return; }
     if (bankRef.current < b + sTotal) { g.msg = "Not enough credits."; rr(); return; }
 
+    // last round's cards go to the discard tray (they stay countable)
+    for (const h of g.hands) g.discards.push(...h.cards);
+    g.discards.push(...g.dealer.cards);
+
     // reshuffle at the cut card
     if (g.shoe.length < cutCard) {
       g.shoe = newShoe(decks);
+      g.discards = [];
       g.msg = "Shuffling a fresh shoe…";
       rr();
       await sleep(900);
@@ -403,12 +424,31 @@ export default function Blackjack() {
         <a className="bj-back" href="#">←</a>
         <span className="bj-title">BLACKJACK</span>
         <span className="bj-rules">{decks} decks · {h17 ? "H17" : "S17"} · BJ pays {pay32 ? "3:2" : "6:5"}</span>
-        <span className="bj-shoe">🂠 {cardsLeft}</span>
         <span className="bj-meters">
           <span><b className="mono">{money(bank)}</b><i>credits</i></span>
         </span>
         <button className="bj-reset" onClick={resetBank}>Reset</button>
       </header>
+
+      {/* shoe / counting strip */}
+      <div className="bj-shoestrip">
+        <div className="bj-shoebar" title="shoe penetration — marker is the cut card">
+          <i style={{ width: `${(dealtCount / shoeTotal) * 100}%` }} />
+          <em style={{ left: `${(1 - cutCard / shoeTotal) * 100}%` }} />
+        </div>
+        <span className="bj-shoetxt mono">
+          {dealtCount}/{shoeTotal} dealt · {decksLeft.toFixed(1)} decks left
+        </span>
+        <label className="bj-counttoggle">
+          <input type="checkbox" checked={showCount} onChange={(e) => setShowCount(e.target.checked)} />
+          count
+        </label>
+        {showCount && (
+          <span className="bj-count mono">
+            RC {running > 0 ? "+" : ""}{running} · TC {trueCount > 0 ? "+" : ""}{trueCount.toFixed(1)}
+          </span>
+        )}
+      </div>
 
       {/* table */}
       <div className="bj-table">
@@ -537,7 +577,7 @@ export default function Blackjack() {
           <span className="bj-settings">
             <label>
               decks
-              <select value={decks} onChange={(e) => { setDecks(+e.target.value); G.current.shoe = newShoe(+e.target.value); rr(); }}>
+              <select value={decks} onChange={(e) => { setDecks(+e.target.value); G.current.shoe = newShoe(+e.target.value); G.current.discards = []; rr(); }}>
                 {[1, 2, 6, 8].map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </label>
@@ -556,7 +596,7 @@ const CSS = `
   --red:#d8433b; --green:#63d68b; --ink:#f3ead2; --dim:#b9d3bd;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  font-family:var(--sans); color:var(--ink); min-height:100vh; user-select:none;
+  font-family:var(--sans); color:var(--ink); min-height:100vh; min-height:100dvh; user-select:none;
   background:radial-gradient(ellipse at 50% -10%, #14754e, var(--felt) 45%, var(--feltdark));
   -webkit-font-smoothing:antialiased; display:flex; flex-direction:column;
 }
@@ -567,7 +607,14 @@ const CSS = `
 .bj-back{color:var(--dim); text-decoration:none; font-size:1rem;}
 .bj-title{font-size:.78rem; letter-spacing:.22em; color:var(--yellow); font-weight:800;}
 .bj-rules{font-size:.62rem; color:var(--dim); letter-spacing:.04em;}
-.bj-shoe{font-size:.72rem; color:var(--dim); margin-left:auto;}
+.bj-shoestrip{display:flex; align-items:center; gap:12px; padding:7px 16px; background:rgba(0,0,0,.18);
+  flex-wrap:wrap; justify-content:center;}
+.bj-shoebar{position:relative; width:180px; height:9px; border-radius:5px; background:rgba(255,255,255,.14); overflow:visible;}
+.bj-shoebar i{position:absolute; left:0; top:0; bottom:0; background:var(--yellow); border-radius:5px; transition:width .3s;}
+.bj-shoebar em{position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--red);}
+.bj-shoetxt{font-size:.62rem; color:var(--dim);}
+.bj-counttoggle{display:flex; gap:5px; align-items:center; font-size:.62rem; color:#9dbfa4; cursor:pointer;}
+.bj-count{font-size:.72rem; color:var(--yellow); font-weight:800;}
 .bj-meters span{display:flex; flex-direction:column; align-items:flex-end;}
 .bj-meters b{font-size:.9rem;}
 .bj-meters i{font-style:normal; font-size:.52rem; text-transform:uppercase; letter-spacing:.12em; color:#86ab8e;}
@@ -671,4 +718,25 @@ const CSS = `
 .bj-settings{width:100%; display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center; margin-top:8px;}
 .bj-settings label{display:flex; gap:5px; align-items:center; font-size:.64rem; color:#9dbfa4; cursor:pointer;}
 .bj-settings select{background:#0f3d28; color:var(--ink); border:1px solid #3f6b4d; border-radius:6px; padding:3px 6px;}
+
+/* compact mobile: smaller cards + tighter spacing so nothing runs off-screen */
+@media (max-width:480px){
+  .bj-card{width:54px; height:78px; margin-right:-16px;}
+  .bj-slot{width:54px; height:78px;}
+  .bj-pip{font-size:1.5rem;}
+  .bj-idx{font-size:.7rem;}
+  .bj-dealer{min-height:112px; padding-top:12px;}
+  .bj-cards{min-height:80px;}
+  .bj-feltarc{padding:7px 18px; margin:4px 0 0;}
+  .bj-feltline{font-size:.68rem; letter-spacing:.18em;}
+  .bj-feltline.small{font-size:.5rem;}
+  .bj-msg{min-height:24px; font-size:.78rem; padding:4px 12px;}
+  .bj-hands{gap:14px;}
+  .bj-side{min-width:104px; padding:7px 8px;}
+  .bj-side-lbl{font-size:.52rem;}
+  .bj-btn{padding:12px 14px; font-size:.74rem;}
+  .bj-chip{width:40px; height:40px; font-size:.64rem;}
+  .bj-rack{padding-bottom:26px;}
+  .bj-shoebar{width:120px;}
+}
 `;
