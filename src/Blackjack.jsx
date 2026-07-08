@@ -426,7 +426,7 @@ export default function Blackjack() {
   const RES_TXT = { win: "WIN", lose: "LOSE", push: "PUSH", bj: "BLACKJACK", surr: "SURRENDER" };
 
   return (
-    <div className={cx("bj", (g.phase === "player" || g.phase === "insurance") && "acting")}>
+    <div className={cx("bj", ["player", "insurance", "done"].includes(g.phase) && "acting")}>
       <style>{CSS}</style>
       <header className="bj-top">
         <a className="bj-back" href="#">←</a>
@@ -567,6 +567,13 @@ export default function Blackjack() {
           </div>
         </div>
       )}
+      {g.phase === "done" && (
+        <div className="bj-float">
+          <button className="bj-fab deal" onClick={deal}>
+            DEAL<small>{money(bet || g.lastBet || 0)}</small>
+          </button>
+        </div>
+      )}
 
       {/* actions */}
       <section className="bj-actions">
@@ -664,16 +671,21 @@ const CSS = `
 .bj-card{width:66px; height:94px; margin-right:-18px; perspective:400px; filter:drop-shadow(0 4px 6px rgba(0,0,0,.45));}
 .bj-card.fresh{animation:bj-dealin .32s cubic-bezier(.2,.8,.3,1);}
 @keyframes bj-dealin{from{transform:translate(60px,-70px) rotate(8deg); opacity:0;} to{transform:none; opacity:1;}}
-.bj-flip{position:relative; width:100%; height:100%; transform-style:preserve-3d; transition:transform .45s cubic-bezier(.6,0,.3,1);}
+.bj-flip{position:relative; width:100%; height:100%; transform-style:preserve-3d; will-change:transform;
+  transition:transform .45s cubic-bezier(.6,0,.3,1);}
 .bj-flip.down{transform:rotateY(180deg);}
-.bj-face{position:absolute; inset:0; backface-visibility:hidden; border-radius:9px; border:1px solid #b9b2a2;}
-.bj-front{background:linear-gradient(150deg,#fdfbf4,#efe9dc); color:#1d232b; display:flex; align-items:center; justify-content:center;}
+/* iOS/Safari 3D artifacts (green sliver bleeding through the card): both faces
+   need webkit backface-visibility AND their own explicit plane. */
+.bj-face{position:absolute; inset:0; -webkit-backface-visibility:hidden; backface-visibility:hidden;
+  border-radius:9px; border:1px solid #b9b2a2;}
+.bj-front{background:linear-gradient(150deg,#fdfbf4,#efe9dc); color:#1d232b; display:flex;
+  align-items:center; justify-content:center; transform:rotateY(0deg) translateZ(1px);}
 .bj-front.red{color:#c22c24;}
 .bj-idx{position:absolute; top:5px; left:6px; font-size:.82rem; font-weight:800; line-height:.95; text-align:center; font-family:Georgia,serif;}
 .bj-idx em{display:block; font-style:normal; font-size:.7rem;}
 .bj-idx.flip2{top:auto; left:auto; bottom:5px; right:6px; transform:rotate(180deg);}
 .bj-pip{font-size:2rem;}
-.bj-back{background:#27456b; transform:rotateY(180deg); display:flex; align-items:center; justify-content:center;}
+.bj-back{background:#27456b; transform:rotateY(180deg) translateZ(1px); display:flex; align-items:center; justify-content:center;}
 .bj-back i{position:absolute; inset:5px; border-radius:6px; border:2px solid rgba(255,255,255,.35);
   background:repeating-linear-gradient(45deg, #2e5280 0 6px, #27456b 6px 12px);}
 
@@ -728,13 +740,23 @@ const CSS = `
 .bj-fab.stand{background:radial-gradient(circle at 35% 30%, #e2574d, #a72820);}
 .bj-float .bj-btn{background:rgba(6,26,15,.92); box-shadow:0 4px 12px rgba(0,0,0,.45);}
 
-/* win pop */
-.bj-winpop{display:flex; flex-direction:column; align-items:center; gap:2px; margin:4px 0;
-  animation:bj-pop .5s cubic-bezier(.2,1.6,.4,1);}
+/* win pop — fixed overlay so it never pushes the layout, fades out on its own */
+.bj-winpop{position:fixed; top:34%; left:50%; z-index:70; pointer-events:none;
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  background:rgba(6,26,15,.82); border:2px solid var(--yellow); border-radius:16px; padding:14px 30px;
+  box-shadow:0 8px 30px rgba(0,0,0,.5);
+  animation:bj-pop .5s cubic-bezier(.2,1.6,.4,1), bj-fade .5s ease 2s forwards;}
 .bj-winpop-t{font-size:.7rem; letter-spacing:.34em; color:var(--yellow); font-weight:900;}
 .bj-winpop-amt{font-size:1.7rem; font-weight:800; color:var(--yellow);
   text-shadow:0 0 18px rgba(247,215,116,.55), 0 2px 4px rgba(0,0,0,.5);}
-@keyframes bj-pop{from{transform:scale(.4); opacity:0;} 70%{transform:scale(1.12);} to{transform:scale(1); opacity:1;}}
+@keyframes bj-pop{from{transform:translate(-50%,-50%) scale(.4); opacity:0;}
+  70%{transform:translate(-50%,-50%) scale(1.12);} to{transform:translate(-50%,-50%) scale(1); opacity:1;}}
+@keyframes bj-fade{to{opacity:0;}}
+.bj-winpop{transform:translate(-50%,-50%);}
+
+.bj-fab.deal{background:radial-gradient(circle at 35% 30%, #d4a940, #8a6c1e); display:flex;
+  flex-direction:column; align-items:center; justify-content:center; gap:1px;}
+.bj-fab.deal small{font-size:.58rem; font-weight:700; opacity:.9;}
 
 .bj-actions{display:flex; gap:9px; padding:10px 16px; flex-wrap:wrap; align-items:center; justify-content:center;}
 .bj-btn{padding:13px 20px; border-radius:11px; border:2px solid var(--linec); background:rgba(0,0,0,.25);
