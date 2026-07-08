@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import Craps from "./Craps.jsx";
+import Blackjack from "./Blackjack.jsx";
 
 // Tiny hash router: #/craps → Bubble Craps game page, anything else → The Book.
 // The game is fully self-contained (play-money, localStorage) and never touches
@@ -13,7 +14,9 @@ function Root() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
-  return hash.startsWith("#/craps") ? <Craps /> : <App />;
+  if (hash.startsWith("#/craps")) return <Craps />;
+  if (hash.startsWith("#/blackjack")) return <Blackjack />;
+  return <App />;
 }
 
 createRoot(document.getElementById("root")).render(
