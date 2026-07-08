@@ -876,6 +876,9 @@ export default function App() {
         )}
 
         <div className="bk-drawer-foot">
+          <a className="bk-craps-link" href="#/craps" onClick={() => setDrawerOpen(false)}>
+            🎲 Bubble Craps
+          </a>
           <div className="bk-drawer-hint">
             Settle days from the list — tick the days you've settled and tap
             “Settle”. Nothing is deleted; settled days move to past periods.
@@ -1323,6 +1326,9 @@ const CSS = `
 .bk-player-item.on .bk-player-count{color:var(--brass-dim);}
 .bk-drawer-empty{color:var(--faint); font-size:.8rem; padding:10px 12px;}
 .bk-drawer-foot{margin-top:auto; padding-top:14px; border-top:1px solid var(--line);}
+.bk-craps-link{display:block; text-align:center; margin-bottom:12px; padding:11px; border:1px dashed var(--brass-dim);
+  border-radius:10px; color:var(--brass); text-decoration:none; font-size:.82rem; font-weight:700;}
+.bk-craps-link:hover{border-color:var(--brass); background:rgba(203,162,78,.1);}
 .bk-drawer-hint{font-size:.72rem; color:var(--faint); line-height:1.5; padding:0 6px;}
 
 /* Day picker in the add form */
