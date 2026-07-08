@@ -169,6 +169,13 @@ export default function Blackjack() {
 
   const activeHand = () => g.hands[g.active];
 
+  // round is over — compute net result for the win banner
+  function endRound() {
+    g.roundNet = bankRef.current - (g.bankAtStart ?? bankRef.current);
+    g.roundKey = Math.random(); // retriggers the pop animation
+    g.phase = "done";
+  }
+
   // ── round flow ─────────────────────────────────────────────────────────────
   async function deal() {
     if (g.phase !== "bet" && g.phase !== "done") return;
@@ -190,6 +197,7 @@ export default function Blackjack() {
       await sleep(900);
     }
 
+    g.bankAtStart = bankRef.current; // for the round-net win banner
     payBank(-(b + sTotal));
     g.lastBet = b;
     setBet(0); // next round's DEAL with no chips = rebet the same amount
@@ -246,13 +254,13 @@ export default function Blackjack() {
     // dealer peeks on A or 10-value
     if ((up.r === "A" || VAL(up.r) === 10) && dealerBJ) {
       g.dealer.hidden = false;
-      g.phase = "done";
       const playerBJ = isBJ(g.hands[0]);
       let note = "Dealer has blackjack.";
       if (ins) { payBank(ins * 3); note += ` Insurance pays ${money(ins * 2)}.`; }
       if (playerBJ) { payBank(b); g.hands[0].result = "push"; note += " Your blackjack pushes."; }
       else g.hands[0].result = "lose";
       g.msg = note;
+      endRound();
       rr();
       return;
     }
@@ -264,8 +272,8 @@ export default function Blackjack() {
       const win = b * (pay32 ? 1.5 : 1.2);
       payBank(b + win);
       g.hands[0].result = "bj";
-      g.phase = "done";
       g.msg = `BLACKJACK! Pays ${money(win)}.`;
+      endRound();
       rr();
       return;
     }
@@ -328,8 +336,8 @@ export default function Blackjack() {
     if (won) notes.push(`${won} win${won > 1 ? "s" : ""}`);
     if (pushed) notes.push(`${pushed} push${pushed > 1 ? "es" : ""}`);
     if (lost) notes.push(`${lost} loss${lost > 1 ? "es" : ""}`);
-    g.phase = "done";
     g.msg = notes.join(" · ");
+    endRound();
     rr();
   }
 
@@ -418,7 +426,7 @@ export default function Blackjack() {
   const RES_TXT = { win: "WIN", lose: "LOSE", push: "PUSH", bj: "BLACKJACK", surr: "SURRENDER" };
 
   return (
-    <div className="bj">
+    <div className={cx("bj", (g.phase === "player" || g.phase === "insurance") && "acting")}>
       <style>{CSS}</style>
       <header className="bj-top">
         <a className="bj-back" href="#">←</a>
@@ -472,6 +480,12 @@ export default function Blackjack() {
           </span>
         </div>
 
+        {g.phase === "done" && g.roundNet > 0 && (
+          <div className="bj-winpop" key={g.roundKey}>
+            <span className="bj-winpop-t">YOU WIN</span>
+            <span className="bj-winpop-amt mono">+{money(g.roundNet)}</span>
+          </div>
+        )}
         <div className={cx("bj-msg", g.phase === "done" && "big")}>{g.msg}&nbsp;</div>
 
       {/* player hands */}
@@ -531,23 +545,31 @@ export default function Blackjack() {
       </section>
       </div>{/* /bj-table */}
 
-      {/* actions */}
-      <section className="bj-actions">
-        {g.phase === "insurance" && (
-          <>
+      {/* floating action cluster — thumb zone, bottom right */}
+      {g.phase === "insurance" && (
+        <div className="bj-float">
+          <div className="bj-float-row">
             <button className="bj-btn ins" onClick={() => afterInsurance(true)}>INSURANCE {money(g.hands[0].bet / 2)}</button>
-            <button className="bj-btn" onClick={() => afterInsurance(false)}>NO THANKS</button>
-          </>
-        )}
-        {g.phase === "player" && (
-          <>
-            <button className="bj-btn hit" onClick={hit}>HIT</button>
-            <button className="bj-btn stand" onClick={stand}>STAND</button>
+            <button className="bj-btn" onClick={() => afterInsurance(false)}>NO</button>
+          </div>
+        </div>
+      )}
+      {g.phase === "player" && (
+        <div className="bj-float">
+          <div className="bj-float-row">
+            {canSurrender() && <button className="bj-btn surr" onClick={surrender}>SURR</button>}
             {canDouble() && <button className="bj-btn dbl" onClick={doubleDown}>DOUBLE</button>}
             {canSplit() && <button className="bj-btn split" onClick={split}>SPLIT</button>}
-            {canSurrender() && <button className="bj-btn surr" onClick={surrender}>SURRENDER</button>}
-          </>
-        )}
+          </div>
+          <div className="bj-float-row">
+            <button className="bj-fab hit" onClick={hit}>HIT</button>
+            <button className="bj-fab stand" onClick={stand}>STAND</button>
+          </div>
+        </div>
+      )}
+
+      {/* actions */}
+      <section className="bj-actions">
         {betting && (
           <>
             <div className="bj-betbox">
@@ -659,7 +681,8 @@ const CSS = `
 .bj-hands{display:flex; gap:26px; flex-wrap:wrap; align-items:flex-end; justify-content:center;}
 .bj-hand{padding:8px 10px 9px; border-radius:12px; border:2px solid transparent;}
 .bj-hand.live{border-color:var(--yellow); background:rgba(247,215,116,.07);}
-.bj-hand.win,.bj-hand.bj{border-color:var(--green);}
+.bj-hand.win,.bj-hand.bj{border-color:var(--green); animation:bj-glow 1.1s ease-out;}
+@keyframes bj-glow{0%{box-shadow:0 0 0 rgba(99,214,139,0);} 30%{box-shadow:0 0 26px rgba(99,214,139,.8);} 100%{box-shadow:0 0 8px rgba(99,214,139,.25);}}
 .bj-hand.lose{opacity:.75;}
 .bj-hand-foot{display:flex; align-items:center; gap:8px; margin-top:8px;}
 .bj-total{font-family:var(--mono); font-weight:800; font-size:.8rem; background:rgba(0,0,0,.3); border-radius:6px; padding:2px 7px;}
@@ -691,6 +714,27 @@ const CSS = `
 
 .bj-msg{padding:6px 18px; min-height:30px; font-size:.86rem; color:var(--yellow); font-weight:600; text-align:center;}
 .bj-msg.big{font-size:1rem;}
+
+/* floating action cluster — bottom CENTER, circular hit/stand */
+.bj-float{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(16px + env(safe-area-inset-bottom));
+  display:flex; flex-direction:column; align-items:center; gap:10px; z-index:60;}
+.bj.acting .bj-table{padding-bottom:150px;} /* keep cards clear of the floating buttons */
+.bj-float-row{display:flex; gap:14px; align-items:center; justify-content:center;}
+.bj-fab{width:78px; height:78px; border-radius:50%; font-weight:900; font-size:.9rem; letter-spacing:.06em;
+  cursor:pointer; color:#fff; border:3px solid rgba(255,255,255,.85);
+  box-shadow:0 6px 18px rgba(0,0,0,.5), inset 0 -4px 0 rgba(0,0,0,.25);}
+.bj-fab:active{transform:translateY(2px);}
+.bj-fab.hit{background:radial-gradient(circle at 35% 30%, #35b567, #17743c);}
+.bj-fab.stand{background:radial-gradient(circle at 35% 30%, #e2574d, #a72820);}
+.bj-float .bj-btn{background:rgba(6,26,15,.92); box-shadow:0 4px 12px rgba(0,0,0,.45);}
+
+/* win pop */
+.bj-winpop{display:flex; flex-direction:column; align-items:center; gap:2px; margin:4px 0;
+  animation:bj-pop .5s cubic-bezier(.2,1.6,.4,1);}
+.bj-winpop-t{font-size:.7rem; letter-spacing:.34em; color:var(--yellow); font-weight:900;}
+.bj-winpop-amt{font-size:1.7rem; font-weight:800; color:var(--yellow);
+  text-shadow:0 0 18px rgba(247,215,116,.55), 0 2px 4px rgba(0,0,0,.5);}
+@keyframes bj-pop{from{transform:scale(.4); opacity:0;} 70%{transform:scale(1.12);} to{transform:scale(1); opacity:1;}}
 
 .bj-actions{display:flex; gap:9px; padding:10px 16px; flex-wrap:wrap; align-items:center; justify-content:center;}
 .bj-btn{padding:13px 20px; border-radius:11px; border:2px solid var(--linec); background:rgba(0,0,0,.25);
