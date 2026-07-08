@@ -410,7 +410,8 @@ export default function Craps() {
         for (const n of POINTS) { b.place[n] = 0; b.buy[n] = 0; }
       } else if (POINTS.includes(total)) {
         if (b.place[total]) pay(`Place ${total}`, 0, b.place[total] * PLACE_PAY[total]);
-        if (b.buy[total]) pay(`Buy ${total}`, 0, b.buy[total] * ODDS_PAY[total] * (1 - VIG));
+        // buy pays true odds minus a 5% vig on the BET (charged on the win)
+        if (b.buy[total]) pay(`Buy ${total}`, 0, b.buy[total] * (ODDS_PAY[total] - VIG));
       }
     }
 
