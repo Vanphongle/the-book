@@ -22,6 +22,45 @@ const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n || 0);
 const cx = (...a) => a.filter(Boolean).join(" ");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isRed = (s) => s === "♥" || s === "♦";
+
+// ── side bets (common casino paytables — vary slightly by house) ─────────────
+// Match the Dealer (6-deck): each of your two cards matching the dealer's
+// upcard rank pays 4:1 unsuited, 11:1 suited (both cards can match).
+// Perfect Pairs: mixed 6:1 · colored 12:1 · perfect 25:1.
+// 21+3 (your two + dealer up): flush 5:1 · straight 10:1 · trips 30:1 ·
+// straight flush 40:1 · suited trips 100:1.
+function scorePairs(a, b) {
+  if (a.r !== b.r) return null;
+  if (a.s === b.s) return { mult: 25, label: "Perfect pair 25:1" };
+  if (isRed(a.s) === isRed(b.s)) return { mult: 12, label: "Colored pair 12:1" };
+  return { mult: 6, label: "Mixed pair 6:1" };
+}
+function scoreMatch(pc, up) {
+  let mult = 0;
+  const parts = [];
+  for (const c of pc) {
+    if (c.r !== up.r) continue;
+    if (c.s === up.s) { mult += 11; parts.push("suited 11:1"); }
+    else { mult += 4; parts.push("match 4:1"); }
+  }
+  return mult ? { mult, label: parts.join(" + ") } : null;
+}
+function score21p3(a, b, up) {
+  const cards = [a, b, up];
+  const suited = cards.every((c) => c.s === a.s);
+  const trips = cards.every((c) => c.r === a.r);
+  const order = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+  const idx = cards.map((c) => order.indexOf(c.r)).sort((x, y) => x - y);
+  const run = (v) => v[1] === v[0] + 1 && v[2] === v[1] + 1;
+  const straight = run(idx) || (idx[0] === 0 && idx[1] === 11 && idx[2] === 12); // A-2-3 … Q-K-A
+  if (trips && suited) return { mult: 100, label: "Suited trips 100:1" };
+  if (straight && suited) return { mult: 40, label: "Straight flush 40:1" };
+  if (trips) return { mult: 30, label: "Three of a kind 30:1" };
+  if (straight) return { mult: 10, label: "Straight 10:1" };
+  if (suited) return { mult: 5, label: "Flush 5:1" };
+  return null;
+}
 
 function newShoe(decks) {
   const shoe = [];
@@ -89,6 +128,7 @@ export default function Blackjack() {
   const rr = () => { if (aliveRef.current) setTick((t) => t + 1); };
   const [bet, setBet] = useState(0);
   const [chip, setChip] = useState(25);
+  const [sides, setSides] = useState({ match: 0, pairs: 0, plus3: 0 });
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
 
@@ -117,8 +157,9 @@ export default function Blackjack() {
   async function deal() {
     if (g.phase !== "bet" && g.phase !== "done") return;
     const b = bet || g.lastBet;
+    const sTotal = sides.match + sides.pairs + sides.plus3;
     if (!b) { g.msg = "Add chips to bet first."; rr(); return; }
-    if (bankRef.current < b) { g.msg = "Not enough credits."; rr(); return; }
+    if (bankRef.current < b + sTotal) { g.msg = "Not enough credits."; rr(); return; }
 
     // reshuffle at the cut card
     if (g.shoe.length < cutCard) {
@@ -128,7 +169,7 @@ export default function Blackjack() {
       await sleep(900);
     }
 
-    payBank(-b);
+    payBank(-(b + sTotal));
     g.lastBet = b;
     setBet(0); // next round's DEAL with no chips = rebet the same amount
     g.phase = "dealing";
@@ -136,6 +177,7 @@ export default function Blackjack() {
     g.hands = [{ cards: [], bet: b, doubled: false, done: false, busted: false, surrendered: false, fromSplit: false, splitAces: false, result: null }];
     g.active = 0;
     g.msg = "";
+    g.sideResults = null;
     rr();
 
     await dealCard(g.hands[0].cards);
@@ -144,6 +186,25 @@ export default function Blackjack() {
     await dealCard(g.dealer.cards, { hidden: true });
 
     const up = g.dealer.cards[0];
+
+    // side bets resolve off the first two cards + dealer upcard
+    if (sTotal) {
+      const [c1, c2] = g.hands[0].cards;
+      const res = {
+        pairs: sides.pairs ? scorePairs(c1, c2) : undefined,
+        match: sides.match ? scoreMatch([c1, c2], up) : undefined,
+        plus3: sides.plus3 ? score21p3(c1, c2, up) : undefined,
+      };
+      const notes = [];
+      let sideWin = 0;
+      for (const [k, r] of Object.entries(res)) {
+        if (r === undefined) continue;
+        if (r) { sideWin += sides[k] * (r.mult + 1); notes.push(`${r.label} +${money(sides[k] * r.mult)}`); }
+      }
+      if (sideWin) payBank(sideWin);
+      g.sideResults = res;
+      if (notes.length) { g.msg = "Side bets: " + notes.join(" · "); rr(); await sleep(700); }
+    }
     if (up.r === "A" && bankRef.current >= b / 2) {
       g.phase = "insurance";
       g.msg = "Insurance? Pays 2:1 if the dealer has blackjack.";
@@ -398,6 +459,36 @@ export default function Blackjack() {
           {!g.hands.length && <div className="bj-slot wide" />}
         </div>
       </section>
+      {/* side bets */}
+      <section className="bj-sides">
+        {[
+          ["pairs", "PERFECT PAIRS", "6:1 · 12:1 · 25:1"],
+          ["plus3", "21 + 3", "5:1 up to 100:1"],
+          ["match", "MATCH THE DEALER", "4:1 / suited 11:1"],
+        ].map(([k, lbl, pays]) => {
+          const r = g.sideResults ? g.sideResults[k] : undefined;
+          const settled = r !== undefined && g.phase !== "bet";
+          return (
+            <button
+              key={k}
+              className={cx("bj-side", sides[k] > 0 && "has", settled && (r ? "won" : "lost"))}
+              onClick={() => betting && setSides((s) => ({ ...s, [k]: s[k] + chip }))}
+            >
+              <span className="bj-side-lbl">{lbl}</span>
+              <span className="bj-side-pays">{pays}</span>
+              {sides[k] > 0 && (
+                <span className="bj-side-amt">
+                  {money(sides[k])}
+                  {betting && (
+                    <i onClick={(e) => { e.stopPropagation(); setSides((s) => ({ ...s, [k]: 0 })); }}>✕</i>
+                  )}
+                </span>
+              )}
+              {settled && <span className={cx("bj-side-badge", r ? "w" : "l")}>{r ? "WIN" : "LOSE"}</span>}
+            </button>
+          );
+        })}
+      </section>
       </div>{/* /bj-table */}
 
       {/* actions */}
@@ -532,6 +623,24 @@ const CSS = `
 .bj-res.win,.bj-res.bj{background:var(--green); color:#06230f;}
 .bj-res.lose{background:var(--red); color:#fff;}
 .bj-res.push,.bj-res.surr{background:#8fa3b8; color:#101820;}
+
+.bj-sides{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; padding:6px 0 12px;}
+.bj-side{position:relative; display:flex; flex-direction:column; align-items:center; gap:3px;
+  border:2px dashed rgba(243,234,210,.4); border-radius:12px; background:rgba(0,0,0,.14);
+  color:var(--ink); padding:9px 14px; cursor:pointer; min-width:150px;}
+.bj-side.has{border-style:solid; border-color:var(--yellow);}
+.bj-side.won{border-color:var(--green); box-shadow:0 0 10px rgba(99,214,139,.4);}
+.bj-side.lost{opacity:.6;}
+.bj-side-lbl{font-size:.6rem; font-weight:900; letter-spacing:.12em;}
+.bj-side-pays{font-size:.54rem; color:var(--dim);}
+.bj-side-amt{font-family:var(--mono); font-size:.66rem; font-weight:800; color:#241c05;
+  background:radial-gradient(circle at 40% 35%, #ffe9a8, #d4a940); border:2px dashed #8a6c1e;
+  border-radius:12px; padding:2px 8px; display:inline-flex; gap:5px; align-items:center;}
+.bj-side-amt i{font-style:normal; cursor:pointer; color:#5e4a12;}
+.bj-side-badge{position:absolute; top:-8px; right:-6px; font-size:.54rem; font-weight:900;
+  border-radius:6px; padding:2px 6px; letter-spacing:.06em;}
+.bj-side-badge.w{background:var(--green); color:#06230f;}
+.bj-side-badge.l{background:var(--red); color:#fff;}
 
 .bj-msg{padding:6px 18px; min-height:30px; font-size:.86rem; color:var(--yellow); font-weight:600; text-align:center;}
 .bj-msg.big{font-size:1rem;}
