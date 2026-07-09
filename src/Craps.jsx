@@ -849,7 +849,7 @@ export default function Craps() {
 
       {/* center-screen roll: tumbling dice, then the result pops */}
       {fx && (
-        <div className={cx("cr-fx", fx.phase)}>
+        <div className={cx("cr-rollfx", fx.phase)}>
           <div className="cr-fx-dice">
             <Die v={dice[0]} rolling={fx.phase === "tumble"} />
             <Die v={dice[1]} rolling={fx.phase === "tumble"} />
@@ -912,19 +912,19 @@ const CSS = `
 .cr .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
 .cr button{font-family:var(--sans);}
 
-/* center-screen roll overlay */
-.cr-fx{position:fixed; inset:0; z-index:80; display:flex; flex-direction:column; align-items:center;
+/* center-screen roll overlay (cr-rollfx — NOT cr-fx, which is the chip ✕) */
+.cr-rollfx{position:fixed; inset:0; z-index:80; display:flex; flex-direction:column; align-items:center;
   justify-content:center; gap:14px; background:rgba(4,12,7,.74); pointer-events:none;
   animation:cr-fxin .18s ease;}
-.cr-fx.result{animation:cr-fxin .18s ease, cr-fxout .35s ease 1.25s forwards;}
+.cr-rollfx.result{animation:cr-fxin .18s ease, cr-fxout .35s ease 1.25s forwards;}
 @keyframes cr-fxin{from{opacity:0;} to{opacity:1;}}
 @keyframes cr-fxout{to{opacity:0;}}
 .cr-fx-dice{display:flex; gap:22px;}
-.cr-fx .cr-die{width:88px; height:88px; border-radius:16px; padding:11px; gap:3px;
+.cr-rollfx .cr-die{width:88px; height:88px; border-radius:16px; padding:11px; gap:3px;
   box-shadow:0 14px 34px rgba(0,0,0,.6);}
-.cr-fx .cr-die.rolling{animation:cr-fxtumble .3s infinite alternate;}
+.cr-rollfx .cr-die.rolling{animation:cr-fxtumble .3s infinite alternate;}
 @keyframes cr-fxtumble{from{transform:translateY(-16px) rotate(-14deg);} to{transform:translateY(12px) rotate(12deg);}}
-.cr-fx.result .cr-die{animation:cr-fxland .4s cubic-bezier(.2,1.5,.4,1);}
+.cr-rollfx.result .cr-die{animation:cr-fxland .4s cubic-bezier(.2,1.5,.4,1);}
 @keyframes cr-fxland{from{transform:scale(1.35); } to{transform:scale(1);}}
 .cr-fx-head{font-size:1.15rem; font-weight:900; letter-spacing:.26em; color:var(--linec);
   text-shadow:0 2px 8px rgba(0,0,0,.6); animation:cr-fxpop .45s cubic-bezier(.2,1.6,.4,1);}
