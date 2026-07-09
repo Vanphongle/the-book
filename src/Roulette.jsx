@@ -293,9 +293,9 @@ export default function Roulette() {
   // the felt bets (or last spin's) become the template for "repeat my bets"
   const customTemplate = sumBets(g.bets) > 0 ? g.bets : g.lastBets && sumBets(g.lastBets) > 0 ? g.lastBets : null;
 
-  function simStart() {
+  function simStart(strat = simCfg.strat) {
     setSimOpen(false);
-    const template = simCfg.strat === "custom" && customTemplate ? JSON.parse(JSON.stringify(customTemplate)) : null;
+    const template = strat === "custom" && customTemplate ? JSON.parse(JSON.stringify(customTemplate)) : null;
     for (const [k, v] of Object.entries(g.bets)) {
       if (k === "straight") for (const amt of Object.values(v)) payBank(amt);
       else if (v) payBank(v);
@@ -304,7 +304,7 @@ export default function Roulette() {
     simRef.current = {
       running: true, busy: false, spins: 0,
       startBank: bankRef.current, startRefill: refillAddRef.current,
-      prog: simCfg.unit, template,
+      prog: simCfg.unit, template, strat,
     };
     setSimStats({ spins: 0, net: 0 });
     setSimRunning(true);
@@ -317,11 +317,12 @@ export default function Roulette() {
   }
   async function simTurn() {
     if (g.phase === "spinning") return;
-    const mart = simCfg.strat === "mart";
+    const strat = simRef.current.strat || simCfg.strat;
+    const mart = strat === "mart";
     const net = bankRef.current - simRef.current.startBank - (refillAddRef.current - simRef.current.startRefill);
     setSimStats({ spins: simRef.current.spins, net, next: mart ? simRef.current.prog : null });
     simRef.current.spins++;
-    if (simCfg.strat === "custom") {
+    if (strat === "custom") {
       // repeat the player's own layout exactly, every spin
       const tpl = simRef.current.template;
       if (!tpl) { simStop(); return; }
@@ -340,9 +341,9 @@ export default function Roulette() {
     if (g.phase === "done") { g.phase = "bet"; }
     payBank(-wager);
     const b = emptyBets();
-    if (simCfg.strat === "red" || mart) b.red = wager;
-    else if (simCfg.strat === "lucky") b.straight = { "17": wager };
-    else if (simCfg.strat === "dozen") b.d1 = wager;
+    if (strat === "red" || mart) b.red = wager;
+    else if (strat === "lucky") b.straight = { "17": wager };
+    else if (strat === "dozen") b.d1 = wager;
     g.bets = b;
     rr();
     await spin();
@@ -490,7 +491,7 @@ export default function Roulette() {
       )}
 
       {/* SIM */}
-      <button className={cx("rl-simfab", simRunning && "running")} onClick={() => (simRunning ? simStop() : setSimOpen(true))}>
+      <button className={cx("rl-simfab", simRunning && "running")} onClick={() => (simRunning ? simStop() : sumBets(g.bets) > 0 ? simStart("custom") : setSimOpen(true))}>
         {simRunning ? "STOP" : "SIM"}
       </button>
       {simStats && (
