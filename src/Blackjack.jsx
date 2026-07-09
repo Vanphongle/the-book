@@ -122,6 +122,71 @@ function ChipStack({ amt, small }) {
   );
 }
 
+// ── basic strategy (multi-deck, DAS, late surrender; H17/S17 aware) ─────────
+// Returns "hit" | "stand" | "double" | "split" | "surrender".
+// opts: {canDouble, canSplit, canSurr, h17, count (deviations on), tc}
+function bestMove(hand, up, opts) {
+  const cards = hand.cards;
+  const v = handValue(cards);
+  const d = VAL(up.r); // 2..11 (A = 11)
+  const isPair = cards.length === 2 && VAL(cards[0].r) === VAL(cards[1].r);
+  const pairOf8 = isPair && VAL(cards[0].r) === 8;
+
+  // counting deviations (the famous ones)
+  if (opts.count) {
+    if (!v.soft && v.total === 16 && d === 10 && opts.tc > 0 && !isPair) return "stand";
+    if (!v.soft && v.total === 15 && d === 10 && opts.tc >= 4) return "stand";
+    if (!v.soft && v.total === 12 && d === 3 && opts.tc >= 2) return "stand";
+    if (!v.soft && v.total === 12 && d === 2 && opts.tc >= 3) return "stand";
+  }
+
+  // late surrender
+  if (opts.canSurr && !v.soft) {
+    if (v.total === 16 && !pairOf8 && [9, 10, 11].includes(d)) return "surrender";
+    if (v.total === 15 && (d === 10 || (opts.h17 && d === 11))) return "surrender";
+    if (opts.h17 && pairOf8 && d === 11) return "surrender"; // 8,8 vs A (H17)
+    if (opts.h17 && v.total === 17 && d === 11) return "surrender";
+  }
+
+  // pairs
+  if (isPair && opts.canSplit) {
+    const p = VAL(cards[0].r);
+    if (p === 11 || p === 8) return "split";
+    if (p === 9) return [7, 10, 11].includes(d) ? "stand" : "split";
+    if (p === 7) return d <= 7 ? "split" : "hit";
+    if (p === 6) return d <= 6 ? "split" : "hit";
+    if (p === 4) return d === 5 || d === 6 ? "split" : "hit";
+    if (p === 3 || p === 2) return d <= 7 ? "split" : "hit";
+    // 5s and 10s play as totals
+  }
+
+  const dbl = opts.canDouble;
+  if (v.soft) {
+    const t = v.total;
+    if (t >= 20) return "stand";
+    if (t === 19) return dbl && opts.h17 && d === 6 ? "double" : "stand";
+    if (t === 18) {
+      if (d >= 2 && d <= 6) return dbl ? "double" : "stand";
+      if (d === 7 || d === 8) return "stand";
+      return "hit";
+    }
+    if (t === 17) return dbl && d >= 3 && d <= 6 ? "double" : "hit";
+    if (t === 15 || t === 16) return dbl && d >= 4 && d <= 6 ? "double" : "hit";
+    return dbl && (d === 5 || d === 6) ? "double" : "hit"; // soft 13-14
+  }
+  const t = v.total;
+  if (t >= 17) return "stand";
+  if (t >= 13) return d <= 6 ? "stand" : "hit";
+  if (t === 12) return d >= 4 && d <= 6 ? "stand" : "hit";
+  if (t === 11) return dbl ? (d === 11 && !opts.h17 ? "hit" : "double") : "hit";
+  if (t === 10) return dbl && d <= 9 ? "double" : "hit";
+  if (t === 9) return dbl && d >= 3 && d <= 6 ? "double" : "hit";
+  return "hit";
+}
+
+// counter's bet spread (units by true count)
+const spreadUnits = (tc) => (tc <= 0 ? 1 : tc < 2 ? 2 : tc < 3 ? 4 : tc < 4 ? 8 : 12);
+
 export default function Blackjack() {
   const [bank, setBank] = useState(() => {
     const v = parseFloat(localStorage.getItem(LS_BANK));
@@ -149,8 +214,16 @@ export default function Blackjack() {
     freshIds: new Set(),
     msg: "Place your bet.",
   });
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const rr = () => { if (aliveRef.current) setTick((t) => t + 1); };
+
+  // ── SIM autopilot state ──
+  const [simOpen, setSimOpen] = useState(false);
+  const [simRunning, setSimRunning] = useState(false);
+  const [simCfg, setSimCfg] = useState({ strat: "basic", unit: 10 });
+  const [simStats, setSimStats] = useState(null); // {hands, net}
+  const simRef = useRef({ running: false, busy: false, hands: 0, startBank: 0, startRefill: 0 });
+  const refillAddRef = useRef(0);
   const [bet, setBet] = useState(0);
   const [chip, setChip] = useState(25);
   const [sides, setSides] = useState({ match: 0, pairs: 0, plus3: 0 });
@@ -187,7 +260,7 @@ export default function Blackjack() {
     target.push(Object.assign(c, hidden ? { hidden: true } : null));
     g.freshIds = new Set([c.id]);
     rr();
-    await sleep(pause);
+    await sleep(simRef.current.running ? Math.min(pause, 120) : pause); // sim plays fast
     return c;
   }
 
@@ -200,15 +273,17 @@ export default function Blackjack() {
     g.phase = "done";
     // busted (can't cover the smallest chip): auto-refill the play bankroll
     if (bankRef.current < CHIPS[0]) {
+      refillAddRef.current += START_BANK - bankRef.current;
       payBank(START_BANK - bankRef.current);
       g.msg += " · Busted — bankroll refilled to $1,000.";
     }
   }
 
   // ── round flow ─────────────────────────────────────────────────────────────
-  async function deal() {
+  async function deal(forced) {
     if (g.phase !== "bet" && g.phase !== "done") return;
-    const b = bet || g.lastBet;
+    // deal is also a click handler — only trust a numeric override (the sim)
+    const b = (typeof forced === "number" ? forced : null) ?? (bet || g.lastBet);
     const sTotal = sides.match + sides.pairs + sides.plus3;
     if (!b) { g.msg = "Add chips to bet first."; rr(); return; }
     if (bankRef.current < b + sTotal) { g.msg = "Not enough credits."; rr(); return; }
@@ -332,7 +407,7 @@ export default function Blackjack() {
     g.phase = "dealer";
     g.dealer.hidden = false;
     rr();
-    await sleep(550);
+    await sleep(simRef.current.running ? 160 : 550);
 
     const liveHands = g.hands.filter((h) => !h.busted && !h.surrendered);
     if (liveHands.length) {
@@ -448,6 +523,68 @@ export default function Blackjack() {
     setBet(0);
     rr();
   }
+
+  // ── SIM autopilot: plays the book (or counts) by itself ──
+  function simStart() {
+    setSimOpen(false);
+    simRef.current = { running: true, busy: false, hands: 0, startBank: bankRef.current, startRefill: refillAddRef.current };
+    setSimStats({ hands: 0, net: 0 });
+    setSimRunning(true);
+  }
+  function simStop() {
+    simRef.current.running = false;
+    setSimRunning(false);
+    const net = bankRef.current - simRef.current.startBank - (refillAddRef.current - simRef.current.startRefill);
+    setSimStats({ hands: simRef.current.hands, net });
+  }
+
+  async function simStep() {
+    const counting = simCfg.strat === "count";
+    if (g.phase === "bet" || g.phase === "done") {
+      const net = bankRef.current - simRef.current.startBank - (refillAddRef.current - simRef.current.startRefill);
+      setSimStats({ hands: simRef.current.hands, net });
+      simRef.current.hands++;
+      const units = counting ? spreadUnits(trueCount) : 1;
+      const wager = Math.min(simCfg.unit * units, Math.max(bankRef.current, CHIPS[0]));
+      await deal(wager);
+      return;
+    }
+    if (g.phase === "insurance") {
+      await afterInsurance(counting && trueCount >= 3);
+      return;
+    }
+    if (g.phase === "player") {
+      const h = activeHand();
+      if (!h || h.done) return;
+      const mv = bestMove(h, g.dealer.cards[0], {
+        canDouble: canDouble(),
+        canSplit: canSplit(),
+        canSurr: canSurrender(),
+        h17,
+        count: counting,
+        tc: trueCount,
+      });
+      if (mv === "surrender") return surrender();
+      if (mv === "split") return split();
+      if (mv === "double") return doubleDown();
+      if (mv === "stand") return stand();
+      return hit();
+    }
+    // dealing / dealer phases: just wait for the next tick
+  }
+
+  useEffect(() => {
+    if (!simRunning || simRef.current.busy) return;
+    const t = setTimeout(async () => {
+      if (!simRef.current.running || simRef.current.busy) return;
+      simRef.current.busy = true;
+      try { await simStep(); } finally {
+        simRef.current.busy = false;
+        if (aliveRef.current) setTick((x) => x + 1);
+      }
+    }, 260);
+    return () => clearTimeout(t);
+  }, [simRunning, tick]); // eslint-disable-line
 
   const betting = g.phase === "bet" || g.phase === "done";
   const dv = g.dealer.cards.length ? handValue(g.dealer.hidden ? [g.dealer.cards[0]] : g.dealer.cards) : null;
@@ -624,11 +761,58 @@ export default function Blackjack() {
         </div>
       )}
 
-      {g.phase === "bet" && (bet > 0 || g.lastBet > 0) && (
+      {g.phase === "bet" && (bet > 0 || g.lastBet > 0) && !simRunning && (
         <div className="bj-float">
           <button className="bj-fab deal" onClick={deal}>
             DEAL<small>{money(bet || g.lastBet)}</small>
           </button>
+        </div>
+      )}
+
+      {/* SIM autopilot */}
+      <button
+        className={cx("bj-simfab", simRunning && "running")}
+        onClick={() => (simRunning ? simStop() : setSimOpen(true))}
+      >
+        {simRunning ? "STOP" : "SIM"}
+      </button>
+      {simStats && (
+        <div className="bj-simstats">
+          <span>{simStats.hands} hands{simRunning && simCfg.strat === "count" ? ` · TC ${trueCount > 0 ? "+" : ""}${trueCount.toFixed(1)}` : ""}</span>
+          <b className={cx("mono", simStats.net >= 0 ? "pos" : "neg")}>
+            {simStats.net >= 0 ? "+" : "−"}{money(Math.abs(simStats.net))}
+          </b>
+        </div>
+      )}
+      {simOpen && (
+        <div className="bj-simpanel">
+          <div className="bj-simpanel-title">AUTOPILOT</div>
+          {[
+            ["basic", "Perfect basic strategy", "plays the book on every hand — flat bets, never takes insurance"],
+            ["count", "Hi-Lo card counter", "basic strategy + bet spread 1-12x by true count, insurance at TC ≥ +3, key deviations"],
+          ].map(([k, lbl, sub]) => (
+            <button
+              key={k}
+              className={cx("bj-simstrat", simCfg.strat === k && "on")}
+              onClick={() => setSimCfg((c) => ({ ...c, strat: k }))}
+            >
+              <b>{lbl}</b>
+              <i>{sub}</i>
+            </button>
+          ))}
+          <div className="bj-simamts">
+            <span>unit</span>
+            {[5, 10, 25, 100].map((a) => (
+              <button key={a} className={cx("bj-simamt", simCfg.unit === a && "on")}
+                onClick={() => setSimCfg((c) => ({ ...c, unit: a }))}>
+                ${a}
+              </button>
+            ))}
+          </div>
+          <div className="bj-simgo">
+            <button className="bj-simcancel" onClick={() => setSimOpen(false)}>Cancel</button>
+            <button className="bj-simstart" onClick={simStart}>▶ START</button>
+          </div>
         </div>
       )}
 
@@ -847,6 +1031,40 @@ const CSS = `
 .bj-settings{width:100%; display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center; margin-top:8px;}
 .bj-settings label{display:flex; gap:5px; align-items:center; font-size:.64rem; color:#9dbfa4; cursor:pointer;}
 .bj-settings select{background:#0f3d28; color:var(--ink); border:1px solid #3f6b4d; border-radius:6px; padding:3px 6px;}
+
+/* SIM autopilot */
+.bj-simfab{position:fixed; left:16px; bottom:calc(18px + env(safe-area-inset-bottom)); z-index:60;
+  width:58px; height:58px; border-radius:50%; border:2.5px solid #7db8ff; color:#a8ceff;
+  background:radial-gradient(circle at 35% 30%, #1d3d63, #10233c); font-weight:900; font-size:.68rem;
+  letter-spacing:.08em; cursor:pointer; box-shadow:0 6px 16px rgba(0,0,0,.5);}
+.bj-simfab.running{border-color:var(--red); color:#ffd9d6;
+  background:radial-gradient(circle at 35% 30%, #6e211c, #3c100d); animation:bj-simpulse 1s infinite alternate;}
+@keyframes bj-simpulse{from{box-shadow:0 0 0 rgba(216,67,59,.5);} to{box-shadow:0 0 18px rgba(216,67,59,.7);}}
+.bj-simstats{position:fixed; left:84px; bottom:calc(26px + env(safe-area-inset-bottom)); z-index:60;
+  display:flex; flex-direction:column; gap:1px; background:rgba(4,26,15,.9); border:1px solid #2c4a35;
+  border-radius:10px; padding:6px 10px; pointer-events:none;}
+.bj-simstats span{font-size:.56rem; color:var(--dim); letter-spacing:.06em;}
+.bj-simstats b{font-size:.82rem; font-weight:800;}
+.bj-simstats b.pos{color:var(--green);} .bj-simstats b.neg{color:var(--red);}
+.bj-simpanel{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(14px + env(safe-area-inset-bottom));
+  z-index:75; width:min(420px, calc(100vw - 24px)); background:#06230f; border:2px solid var(--yellow);
+  border-radius:16px; padding:14px; display:flex; flex-direction:column; gap:8px; box-shadow:0 -8px 40px rgba(0,0,0,.6);}
+.bj-simpanel-title{font-size:.62rem; letter-spacing:.24em; color:var(--yellow); font-weight:900; text-align:center;}
+.bj-simstrat{display:flex; flex-direction:column; gap:3px; text-align:left; padding:10px 12px;
+  border:1.5px solid #2c4a35; border-radius:10px; background:rgba(255,255,255,.03); color:var(--ink); cursor:pointer;}
+.bj-simstrat.on{border-color:var(--yellow); background:rgba(247,215,116,.1);}
+.bj-simstrat b{font-size:.74rem; font-weight:800;}
+.bj-simstrat i{font-style:normal; font-size:.58rem; color:var(--dim); line-height:1.45;}
+.bj-simamts{display:flex; align-items:center; gap:7px;}
+.bj-simamts > span{font-size:.58rem; color:var(--dim); letter-spacing:.08em;}
+.bj-simamt{flex:1; padding:9px 2px; border:1.5px solid #2c4a35; border-radius:9px; background:transparent;
+  color:var(--ink); font-weight:800; font-size:.72rem; cursor:pointer; font-family:var(--mono);}
+.bj-simamt.on{border-color:var(--yellow); background:rgba(247,215,116,.14); color:var(--yellow);}
+.bj-simgo{display:flex; gap:8px;}
+.bj-simcancel{flex:1; padding:11px; border:1.5px solid #2c4a35; border-radius:10px; background:transparent;
+  color:var(--dim); font-weight:700; font-size:.72rem; cursor:pointer;}
+.bj-simstart{flex:2; padding:11px; border:2px solid var(--yellow); border-radius:10px;
+  background:linear-gradient(#8a6c1e,#5e4a12); color:#fff; font-weight:900; letter-spacing:.1em; font-size:.78rem; cursor:pointer;}
 
 /* compact mobile: smaller cards + tighter spacing so nothing runs off-screen */
 @media (max-width:480px){
