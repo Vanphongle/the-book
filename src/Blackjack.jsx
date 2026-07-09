@@ -82,18 +82,21 @@ function handValue(cards) {
 const isBJ = (h) => h.cards.length === 2 && !h.fromSplit && handValue(h.cards).total === 21;
 
 // ─── card face ──────────────────────────────────────────────────────────────
+// One face at a time — no 3D double-faced flip, so no z-fighting artifacts on
+// iOS. The hole card mounts its front with a flip-in animation when revealed.
 function Card({ c, hidden, fresh }) {
   const red = c && (c.s === "♥" || c.s === "♦");
   return (
     <div className={cx("bj-card", fresh && "fresh")}>
-      <div className={cx("bj-flip", hidden && "down")}>
-        <div className={cx("bj-face bj-front", red && "red")}>
+      {hidden ? (
+        <div className="bj-face bj-back"><i /></div>
+      ) : (
+        <div className={cx("bj-face bj-front", red && "red", c?.wasHidden && "flipin")}>
           <span className="bj-idx">{c?.r}<em>{c?.s}</em></span>
           <span className="bj-pip">{c?.s}</span>
           <span className="bj-idx flip2">{c?.r}<em>{c?.s}</em></span>
         </div>
-        <div className="bj-face bj-back"><i /></div>
-      </div>
+      )}
     </div>
   );
 }
@@ -220,7 +223,7 @@ export default function Blackjack() {
   // ── SIM autopilot state ──
   const [simOpen, setSimOpen] = useState(false);
   const [simRunning, setSimRunning] = useState(false);
-  const [simCfg, setSimCfg] = useState({ strat: "basic", unit: 10 });
+  const [simCfg, setSimCfg] = useState({ strat: "basic", unit: 10, sides: false });
   const [simStats, setSimStats] = useState(null); // {hands, net}
   const simRef = useRef({ running: false, busy: false, hands: 0, startBank: 0, startRefill: 0 });
   const refillAddRef = useRef(0);
@@ -257,7 +260,7 @@ export default function Blackjack() {
   async function dealCard(target, { hidden = false, pause = 330 } = {}) {
     const c = draw();
     c.id = Math.random();
-    target.push(Object.assign(c, hidden ? { hidden: true } : null));
+    target.push(Object.assign(c, hidden ? { hidden: true, wasHidden: true } : null));
     g.freshIds = new Set([c.id]);
     rr();
     await sleep(simRef.current.running ? Math.min(pause, 120) : pause); // sim plays fast
@@ -527,13 +530,22 @@ export default function Blackjack() {
   // ── SIM autopilot: plays the book (or counts) by itself ──
   function simStart() {
     setSimOpen(false);
-    simRef.current = { running: true, busy: false, hands: 0, startBank: bankRef.current, startRefill: refillAddRef.current };
+    simRef.current = {
+      running: true, busy: false, hands: 0,
+      startBank: bankRef.current, startRefill: refillAddRef.current,
+      prevSides: sides,
+    };
+    // "for science": bet the unit on all three side bets every hand
+    setSides(simCfg.sides
+      ? { match: simCfg.unit, pairs: simCfg.unit, plus3: simCfg.unit }
+      : { match: 0, pairs: 0, plus3: 0 });
     setSimStats({ hands: 0, net: 0 });
     setSimRunning(true);
   }
   function simStop() {
     simRef.current.running = false;
     setSimRunning(false);
+    setSides(simRef.current.prevSides || { match: 0, pairs: 0, plus3: 0 });
     const net = bankRef.current - simRef.current.startBank - (refillAddRef.current - simRef.current.startRefill);
     setSimStats({ hands: simRef.current.hands, net });
   }
@@ -545,7 +557,12 @@ export default function Blackjack() {
       setSimStats({ hands: simRef.current.hands, net });
       simRef.current.hands++;
       const units = counting ? spreadUnits(trueCount) : 1;
-      const wager = Math.min(simCfg.unit * units, Math.max(bankRef.current, CHIPS[0]));
+      const sTotal = sides.match + sides.pairs + sides.plus3;
+      if (sTotal && bankRef.current < sTotal + CHIPS[0]) {
+        setSides({ match: 0, pairs: 0, plus3: 0 }); // too broke for side bets
+        return;
+      }
+      const wager = Math.max(CHIPS[0], Math.min(simCfg.unit * units, bankRef.current - sTotal));
       await deal(wager);
       return;
     }
@@ -809,6 +826,15 @@ export default function Blackjack() {
               </button>
             ))}
           </div>
+          <label className="bj-simsides">
+            <input
+              type="checkbox"
+              checked={simCfg.sides}
+              onChange={(e) => setSimCfg((c) => ({ ...c, sides: e.target.checked }))}
+            />
+            also bet Perfect Pairs + 21+3 + Match Dealer every hand
+            <i>(for science — these are 2-7% house-edge bets; watch them drain)</i>
+          </label>
           <div className="bj-simgo">
             <button className="bj-simcancel" onClick={() => setSimOpen(false)}>Cancel</button>
             <button className="bj-simstart" onClick={simStart}>▶ START</button>
@@ -893,24 +919,21 @@ const CSS = `
 .bj-slot.wide{width:140px;}
 
 /* card */
-.bj-card{width:66px; height:94px; margin-right:-18px; perspective:400px; filter:drop-shadow(0 4px 6px rgba(0,0,0,.45));}
+.bj-card{width:66px; height:94px; margin-right:-18px; filter:drop-shadow(0 4px 6px rgba(0,0,0,.45));}
 .bj-card.fresh{animation:bj-dealin .32s cubic-bezier(.2,.8,.3,1);}
 @keyframes bj-dealin{from{transform:translate(60px,-70px) rotate(8deg); opacity:0;} to{transform:none; opacity:1;}}
-.bj-flip{position:relative; width:100%; height:100%; transform-style:preserve-3d; will-change:transform;
-  transition:transform .45s cubic-bezier(.6,0,.3,1);}
-.bj-flip.down{transform:rotateY(180deg);}
-/* iOS/Safari 3D artifacts (green sliver bleeding through the card): both faces
-   need webkit backface-visibility AND their own explicit plane. */
-.bj-face{position:absolute; inset:0; -webkit-backface-visibility:hidden; backface-visibility:hidden;
-  border-radius:9px; border:1px solid #b9b2a2;}
+/* single face at a time — no 3D pair, no iOS z-fighting */
+.bj-face{width:100%; height:100%; border-radius:9px; border:1px solid #b9b2a2; position:relative;}
 .bj-front{background:linear-gradient(150deg,#fdfbf4,#efe9dc); color:#1d232b; display:flex;
-  align-items:center; justify-content:center; transform:rotateY(0deg) translateZ(1px);}
+  align-items:center; justify-content:center;}
+.bj-front.flipin{animation:bj-flipin .4s cubic-bezier(.3,.8,.3,1);}
+@keyframes bj-flipin{from{transform:rotateY(88deg);} to{transform:none;}}
 .bj-front.red{color:#c22c24;}
 .bj-idx{position:absolute; top:5px; left:6px; font-size:.82rem; font-weight:800; line-height:.95; text-align:center; font-family:Georgia,serif;}
 .bj-idx em{display:block; font-style:normal; font-size:.7rem;}
 .bj-idx.flip2{top:auto; left:auto; bottom:5px; right:6px; transform:rotate(180deg);}
 .bj-pip{font-size:2rem;}
-.bj-back{background:#27456b; transform:rotateY(180deg) translateZ(1px); display:flex; align-items:center; justify-content:center;}
+.bj-back{background:#27456b; display:flex; align-items:center; justify-content:center;}
 .bj-back i{position:absolute; inset:5px; border-radius:6px; border:2px solid rgba(255,255,255,.35);
   background:repeating-linear-gradient(45deg, #2e5280 0 6px, #27456b 6px 12px);}
 
@@ -1060,6 +1083,9 @@ const CSS = `
 .bj-simamt{flex:1; padding:9px 2px; border:1.5px solid #2c4a35; border-radius:9px; background:transparent;
   color:var(--ink); font-weight:800; font-size:.72rem; cursor:pointer; font-family:var(--mono);}
 .bj-simamt.on{border-color:var(--yellow); background:rgba(247,215,116,.14); color:var(--yellow);}
+.bj-simsides{display:flex; gap:8px; align-items:flex-start; font-size:.6rem; color:var(--dim);
+  cursor:pointer; line-height:1.5; flex-wrap:wrap;}
+.bj-simsides i{font-style:normal; color:#8fa3b8; width:100%; margin-left:22px; font-size:.54rem;}
 .bj-simgo{display:flex; gap:8px;}
 .bj-simcancel{flex:1; padding:11px; border:1.5px solid #2c4a35; border-radius:10px; background:transparent;
   color:var(--dim); font-weight:700; font-size:.72rem; cursor:pointer;}
