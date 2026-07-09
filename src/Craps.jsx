@@ -954,7 +954,7 @@ const CSS = `
 /* number boxes */
 .cr-numrow{display:grid; grid-template-columns:1.1fr repeat(6,1fr); gap:7px; margin-top:14px;}
 .cr-box{position:relative; border:2px solid var(--linec); border-radius:8px; background:rgba(255,255,255,.03);
-  display:flex; flex-direction:column; min-height:124px; color:var(--ink);}
+  display:flex; flex-direction:column; min-height:104px; color:var(--ink);}
 .cr-box.ispoint{box-shadow:0 0 0 3px var(--yellow); border-color:var(--yellow);}
 /* puck floats on the box's top edge — no reserved gap inside */
 .cr-pucks{position:absolute; top:-12px; left:0; right:0; display:flex; justify-content:center; z-index:6; pointer-events:none;}
@@ -963,7 +963,7 @@ const CSS = `
 .cr-puck.on{background:#f5f0e6; color:#111;}
 .cr-puck.off{background:#111; color:#eee; border:1px solid #444;}
 .cr-numarea{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; cursor:pointer; position:relative;}
-.cr-bignum{font-size:2.3rem; font-weight:800; font-family:Georgia,'Times New Roman',serif; line-height:1; text-shadow:0 2px 4px var(--shadow);}
+.cr-bignum{font-size:1.7rem; font-weight:800; font-family:Georgia,'Times New Roman',serif; line-height:1; text-shadow:0 2px 4px var(--shadow);}
 .cr-behind{font-size:.5rem; background:rgba(232,87,77,.25); border:1px solid var(--red); color:#ffd9d6;
   border-radius:6px; padding:2px 5px; cursor:pointer;}
 .cr-comechips{font-size:.52rem; background:rgba(247,215,116,.2); border:1px solid var(--yellow); color:var(--yellow);
@@ -978,9 +978,10 @@ const CSS = `
 .cr-pbf.has{background:rgba(247,215,116,.15);}
 .cr-layzone{border:none; border-top:1.5px solid var(--linec); background:rgba(0,0,0,.18); color:#e8b7b2;
   font-size:.5rem; font-weight:800; letter-spacing:.14em; padding:3px; cursor:pointer;}
-.cr-dcbar{background:rgba(0,0,0,.22); cursor:pointer; align-items:center; justify-content:center; gap:6px; padding:8px 4px;}
-.cr-dcbar:disabled{opacity:.8; cursor:default; border-style:dashed;}
-.cr-dc-lbl{font-size:.6rem; font-weight:800; letter-spacing:.12em; text-align:center; color:var(--ink);}
+.cr-dcbar{background:rgba(0,0,0,.22); cursor:pointer; align-items:center; justify-content:center; gap:5px;
+  padding:4px; min-height:0;}
+.cr-dcbar:disabled{opacity:.75; cursor:default; border-style:dashed;}
+.cr-dc-lbl{font-size:.5rem; font-weight:800; letter-spacing:.1em; text-align:center; color:var(--dim);}
 .cr-dcbar.has{background:rgba(247,215,116,.14);}
 .cr-band-hint{font-size:.5rem; letter-spacing:.05em; color:var(--dim); font-weight:600; text-transform:none;}
 
@@ -1056,11 +1057,13 @@ const CSS = `
 
   /* numbers: 3 × 2 grid, Don't Come bar spans the full row above them */
   .cr-numrow{grid-template-columns:repeat(3,1fr); gap:8px;}
-  .cr-dcbar{grid-column:1/-1; flex-direction:row; min-height:52px; justify-content:center; align-items:center; padding:6px;}
-  .cr-dcbar .cr-dc-lbl br{display:none;}
-  .cr-dcbar .cr-pucks{height:auto;}
-  .cr-box{min-height:158px;}
-  .cr-bignum{font-size:2.6rem;}
+  /* Don't Come: a tiny one-line strip — rarely used, shouldn't dominate */
+  .cr-dcbar{grid-column:1/-1; flex-direction:row; min-height:28px; justify-content:center; align-items:center;
+    padding:3px 6px; gap:8px;}
+  .cr-dcbar .cr-band-hint{font-size:.44rem;}
+  .cr-dcbar .cr-pucks{position:static; transform:none;}
+  .cr-box{min-height:104px;}
+  .cr-bignum{font-size:1.8rem;}
 
   /* lower felt: bands full-width, then quick-set row, then C/C&E/E row */
   .cr-lower{display:flex; flex-direction:column; gap:10px;}
