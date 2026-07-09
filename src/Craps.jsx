@@ -554,49 +554,64 @@ export default function Craps() {
   }
 
   // ── little chip on the felt ─────────────────────────────────────────────────
-  // Drag a felt chip to the top tray to take the bet down; a plain tap adds
-  // another selected chip to the same bet.
+  // Chip interactions:
+  //  • TAP passes through to the spot underneath → adds another chip (native
+  //    click, no custom logic to break on mobile)
+  //  • DRAG (move >10px) lifts the chip; page scrolling is blocked while the
+  //    finger is on a chip; drop on the tray takes the bet down
+  const suppressClickUntil = useRef(0);
   function chipPointerDown(e, path, amt, locked) {
     if (rolling) return;
-    e.stopPropagation();
-    e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
     let moved = false;
+    const blockScroll = (ev) => ev.preventDefault();
+    document.addEventListener("touchmove", blockScroll, { passive: false });
+    // forgiving drop zone: anywhere along the top of the screen (tray area)
     const overTray = (ev) => {
       const r = trayRef.current?.getBoundingClientRect();
-      return !!r && ev.clientY < r.bottom + 26 && ev.clientY > r.top - 26 &&
-        ev.clientX > r.left - 26 && ev.clientX < r.right + 26;
+      const zone = Math.max(r ? r.bottom + 30 : 0, 110);
+      return ev.clientY < zone;
+    };
+    const cleanup = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", cancel);
+      document.removeEventListener("touchmove", blockScroll);
+      setDrag(null);
     };
     const move = (ev) => {
-      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
       if (locked) return; // contract bets can't come down — no drag
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 10) return;
       moved = true;
       setDrag({ path, amt, x: ev.clientX, y: ev.clientY, over: overTray(ev) });
     };
     const up = (ev) => {
-      document.removeEventListener("pointermove", move);
-      document.removeEventListener("pointerup", up);
-      setDrag(null);
+      cleanup();
       if (moved) {
+        suppressClickUntil.current = Date.now() + 400; // a drag is not a tap
         if (overTray(ev)) removeBet(path);
-      } else if (!locked && path) {
-        place(path); // tap on the chip = add another
       }
+      // not moved → the native click bubbles to the spot and adds a chip
     };
+    const cancel = () => cleanup();
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", cancel);
   }
 
   const Chip = ({ amt, path, locked }) =>
     amt > 0 ? (
       <span
         className={cx("cr-fchip", !locked && "draggable")}
-        onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => chipPointerDown(e, path, amt, locked)}
       >
         <MiniStack amt={amt} />
         {!locked && path && (
-          <i className="cr-fx" onClick={(e) => { e.stopPropagation(); removeBet(path); }}>✕</i>
+          <i
+            className="cr-fx"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); removeBet(path); }}
+          >✕</i>
         )}
       </span>
     ) : null;
@@ -604,7 +619,12 @@ export default function Craps() {
   const total = dice[0] + dice[1];
 
   return (
-    <div className="cr">
+    <div
+      className="cr"
+      onClickCapture={(e) => {
+        if (Date.now() < suppressClickUntil.current) { e.preventDefault(); e.stopPropagation(); }
+      }}
+    >
       <style>{CSS}</style>
 
       {/* top strip: dome + controls + meters */}
@@ -617,7 +637,7 @@ export default function Craps() {
               ${c}
             </button>
           ))}
-          {drag && <span className="cr-traytip">{drag.over ? "release to remove" : "drag here to remove"}</span>}
+          {drag && <span className="cr-traytip">{drag.over ? "release to remove ✓" : "drag to the top to remove"}</span>}
         </span>
         <span className="cr-meters">
           <span><b className="mono">{money(bank)}</b><i>credits</i></span>
@@ -844,10 +864,11 @@ export default function Craps() {
         </div>
       )}
 
-      {/* chip being dragged */}
+      {/* chip being dragged + the drop zone band */}
+      {drag && <div className={cx("cr-dropzone", drag.over && "over")} />}
       {drag && (
         <div className="cr-dragghost" style={{ left: drag.x, top: drag.y }}>
-          <MiniStack amt={drag.amt} size={30} />
+          <MiniStack amt={drag.amt} size={34} />
         </div>
       )}
 
@@ -885,7 +906,7 @@ const CSS = `
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   font-family:var(--sans); color:var(--ink); min-height:100vh; min-height:100dvh;
   background:radial-gradient(ellipse at 50% 0%, #11291a, #0a1810 70%);
-  -webkit-font-smoothing:antialiased; user-select:none;
+  -webkit-font-smoothing:antialiased; user-select:none; -webkit-touch-callout:none;
 }
 .cr *{box-sizing:border-box;}
 .cr .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
@@ -1085,8 +1106,11 @@ const CSS = `
   text-shadow:0 1px 1px rgba(0,0,0,.7); font-family:var(--mono);}
 
 /* dragging a chip to the tray */
-.cr-dragghost{position:fixed; z-index:95; pointer-events:none; transform:translate(-50%,-60%) scale(1.15);
-  filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));}
+.cr-dragghost{position:fixed; z-index:95; pointer-events:none; transform:translate(-50%,-70%) scale(1.2);
+  filter:drop-shadow(0 10px 16px rgba(0,0,0,.65));}
+.cr-dropzone{position:fixed; top:0; left:0; right:0; height:110px; z-index:90; pointer-events:none;
+  border-bottom:2px dashed rgba(247,215,116,.55); background:linear-gradient(rgba(247,215,116,.1), transparent);}
+.cr-dropzone.over{border-bottom-color:var(--red); background:linear-gradient(rgba(232,87,77,.18), transparent);}
 .cr-topchips{position:relative;}
 .cr-topchips.dragging{outline:2px dashed rgba(247,215,116,.5); outline-offset:5px; border-radius:12px;}
 .cr-topchips.dragover{outline-color:var(--red); background:rgba(232,87,77,.12);}
