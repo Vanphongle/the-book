@@ -58,7 +58,7 @@ const sumBets = (b) =>
 
 // SVG wheel
 function Wheel({ pockets, rot, ballRot, spinning, result, fast }) {
-  const dur = fast ? 1.3 : 4.2;
+  const dur = fast ? 1.3 : 4.6;
   const seg = 360 / pockets.length;
   const R = 140, Rin = 82;
   const rad = (a) => (a * Math.PI) / 180;
@@ -111,7 +111,7 @@ function Wheel({ pockets, rot, ballRot, spinning, result, fast }) {
         className="rl-ballorbit"
         style={{
           transform: `rotate(${ballRot}deg)`,
-          transition: spinning ? `transform ${dur}s cubic-bezier(.2,.75,.25,1)` : "none",
+          transition: spinning ? `transform ${dur}s cubic-bezier(.17,.89,.22,1)` : "none",
         }}
       >
         <i className={cx("rl-ball", spinning && "drop", fast && "fast")} style={{ animationDuration: `${dur}s` }} />
@@ -217,14 +217,14 @@ export default function Roulette() {
     // pick the pocket, then animate the wheel to land it under the pointer
     const idx = Math.floor(Math.random() * pockets.length);
     const seg = 360 / pockets.length;
-    const spins = simRef.current.running ? 2 : 5;
+    const spins = simRef.current.running ? 2 : 6;
     const targetMod = (360 - idx * seg) % 360; // wheel rotation that puts pocket idx at top
     const current = ((rot % 360) + 360) % 360;
     const delta = (targetMod - current + 360) % 360 + spins * 360;
     setSpinning(true);
     setRot(rot + delta);
-    setBallRot(ballRot - (spins + 3) * 360); // counter-spin, ends at top with the pocket
-    await sleep(simRef.current.running ? 1400 : 4300);
+    setBallRot(ballRot - (spins + 4) * 360); // ball runs faster than the wheel, opposite way
+    await sleep(simRef.current.running ? 1400 : 4750);
 
     const n = pockets[idx];
     settle(n);
@@ -542,10 +542,19 @@ const CSS = `
   width:0; height:0; border-left:9px solid transparent; border-right:9px solid transparent; border-top:16px solid var(--gold);
   filter:drop-shadow(0 2px 3px rgba(0,0,0,.6));}
 .rl-ballorbit{position:absolute; inset:0; pointer-events:none;}
-.rl-ball{position:absolute; left:50%; top:5.5%; width:11px; height:11px; margin-left:-5.5px; border-radius:50%;
-  background:radial-gradient(circle at 35% 30%, #fff, #cfcfcf 65%, #8a8a8a); box-shadow:0 1px 3px rgba(0,0,0,.6);}
-.rl-ball.drop{animation:rl-balldrop 4.2s cubic-bezier(.3,.6,.4,1) forwards;}
-@keyframes rl-balldrop{0%{top:4.5%;} 55%{top:5%;} 80%{top:12%;} 90%{top:17.5%;} 95%{top:16.5%;} 100%{top:17%;}}
+.rl-ball{position:absolute; left:50%; top:4.5%; width:11px; height:11px; margin-left:-5.5px; border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, #fff, #cfcfcf 65%, #8a8a8a); box-shadow:0 2px 4px rgba(0,0,0,.65);}
+/* rides the outer track almost the whole spin, then falls off late and fast
+   with two fret bounces into the pocket band — like a real ball */
+.rl-ball.drop{animation:rl-balldrop 4.6s forwards;}
+@keyframes rl-balldrop{
+  0%,70%{top:4.5%; animation-timing-function:ease-in;}
+  78%{top:9.6%; animation-timing-function:ease-out;}   /* falls off the track */
+  83%{top:8.2%; animation-timing-function:ease-in;}    /* first fret bounce */
+  88%{top:10.1%; animation-timing-function:ease-out;}  /* hits the pockets */
+  92%{top:9.1%; animation-timing-function:ease-in;}    /* small second bounce */
+  100%{top:9.7%;}                                       /* settles in the pocket */
+}
 .rl-resultnum{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:52px; height:52px;
   border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:Georgia,serif;
   font-size:1.3rem; font-weight:800; color:#fff; border:2.5px solid var(--gold); animation:rl-rpop .4s cubic-bezier(.2,1.5,.4,1);}
