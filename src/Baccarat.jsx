@@ -11,7 +11,7 @@ import { useState, useEffect, useRef } from "react";
 // Nothing here touches The Book's Supabase data.
 
 const LS_BANK = "the-book.baccarat.bank.v1";
-const START_BANK = 1000;
+const START_BANK = 10000;
 const CHIPS = [5, 10, 25, 100, 500];
 const DECKS = 8;
 
@@ -235,7 +235,7 @@ export default function Baccarat() {
     if (bankRef.current < CHIPS[0]) {
       refillAddRef.current += START_BANK - bankRef.current;
       payBank(START_BANK - bankRef.current);
-      g.msg += " · Busted — bankroll refilled to $1,000.";
+      g.msg += " · Busted — bankroll refilled to $10,000.";
     }
     rr();
   }
@@ -315,7 +315,7 @@ export default function Baccarat() {
 
   function resetBank() {
     if (g.phase === "dealing") return;
-    if (!window.confirm("Reset play bankroll to $1,000?")) return;
+    if (!window.confirm("Reset play bankroll to $10,000?")) return;
     payBank(START_BANK - bankRef.current);
     g.bets = emptyBets();
     g.msg = "Fresh bankroll. Place your bets.";

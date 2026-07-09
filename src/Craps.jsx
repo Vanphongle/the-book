@@ -17,7 +17,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 // Play money only (localStorage) — fully separate from The Book's data.
 
 const LS_BANK = "the-book.craps.bank.v1";
-const START_BANK = 1000;
+const START_BANK = 10000;
 const POINTS = [4, 5, 6, 8, 9, 10];
 const CHIPS = [1, 5, 10, 25, 100];
 
@@ -595,7 +595,7 @@ export default function Craps() {
     if (bankRef.current < CHIPS[0] && sumBets(b, L) === 0) {
       refillAddRef.current += START_BANK - bankRef.current;
       commitBank(START_BANK);
-      events.push("Busted — bankroll refilled to $1,000");
+      events.push("Busted — bankroll refilled to $10,000");
     }
     setLastWin(winnings);
     setHistory((h) => [{ d1, d2, total, mark }, ...h].slice(0, 16));
@@ -615,7 +615,7 @@ export default function Craps() {
 
   function cashReset() {
     if (rolling) return;
-    if (!window.confirm("Reset play bankroll to $1,000? Bets on the board are cleared.")) return;
+    if (!window.confirm("Reset play bankroll to $10,000? Bets on the board are cleared.")) return;
     commitBets(emptyBets());
     commitLucky({ bet: 0, active: false, hits: [] });
     setPoint(null);

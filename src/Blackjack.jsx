@@ -11,7 +11,7 @@ import { useState, useRef, useEffect } from "react";
 // (localStorage) — nothing here touches The Book's data.
 
 const LS_BANK = "the-book.blackjack.bank.v1";
-const START_BANK = 1000;
+const START_BANK = 10000;
 const CHIPS = [5, 10, 25, 100, 500];
 
 const SUITS = ["♠", "♥", "♦", "♣"];
@@ -306,7 +306,7 @@ export default function Blackjack() {
     if (bankRef.current < CHIPS[0]) {
       refillAddRef.current += START_BANK - bankRef.current;
       payBank(START_BANK - bankRef.current);
-      g.msg += " · Busted — bankroll refilled to $1,000.";
+      g.msg += " · Busted — bankroll refilled to $10,000.";
     }
   }
 
@@ -546,7 +546,7 @@ export default function Blackjack() {
 
   function resetBank() {
     if (g.phase === "dealing" || g.phase === "dealer") return;
-    if (!window.confirm("Reset play bankroll to $1,000?")) return;
+    if (!window.confirm("Reset play bankroll to $10,000?")) return;
     bankRef.current = START_BANK;
     setBank(START_BANK);
     g.phase = "bet"; g.hands = []; g.dealer = { cards: [], hidden: true };

@@ -13,7 +13,7 @@ import { useState, useEffect, useRef } from "react";
 // Nothing here touches The Book's Supabase data.
 
 const LS_BANK = "the-book.roulette.bank.v1";
-const START_BANK = 1000;
+const START_BANK = 10000;
 const CHIPS = [1, 5, 10, 25, 100];
 
 // real wheel orders (clockwise)
@@ -264,14 +264,14 @@ export default function Roulette() {
     if (bankRef.current < CHIPS[0]) {
       refillAddRef.current += START_BANK - bankRef.current;
       payBank(START_BANK - bankRef.current);
-      g.msg += " · Busted — bankroll refilled to $1,000.";
+      g.msg += " · Busted — bankroll refilled to $10,000.";
     }
     rr();
   }
 
   function resetBank() {
     if (spinning) return;
-    if (!window.confirm("Reset play bankroll to $1,000?")) return;
+    if (!window.confirm("Reset play bankroll to $10,000?")) return;
     for (const [k, v] of Object.entries(g.bets)) {
       if (k === "straight") for (const amt of Object.values(v)) payBank(amt);
       else if (v) payBank(v);
