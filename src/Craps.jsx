@@ -292,9 +292,9 @@ export default function Craps() {
       setDice([d1, d2]);
       const out = resolve(d1, d2);
       setFx({ phase: "result", ...out });
-      fxTimer.current = setTimeout(() => setFx(null), 1650);
+      fxTimer.current = setTimeout(() => setFx(null), 1050);
       setRolling(false);
-    }, 1300);
+    }, 950);
   }
   useEffect(() => () => { clearTimeout(rollTimer.current); clearTimeout(fxTimer.current); }, []);
 
@@ -849,7 +849,10 @@ export default function Craps() {
 
       {/* center-screen roll: tumbling dice, then the result pops */}
       {fx && (
-        <div className={cx("cr-rollfx", fx.phase)}>
+        <div
+          className={cx("cr-rollfx", fx.phase)}
+          onClick={() => { if (fx.phase === "result") { clearTimeout(fxTimer.current); setFx(null); } }}
+        >
           <div className="cr-fx-dice">
             <Die v={dice[0]} rolling={fx.phase === "tumble"} />
             <Die v={dice[1]} rolling={fx.phase === "tumble"} />
@@ -914,9 +917,9 @@ const CSS = `
 
 /* center-screen roll overlay (cr-rollfx — NOT cr-fx, which is the chip ✕) */
 .cr-rollfx{position:fixed; inset:0; z-index:80; display:flex; flex-direction:column; align-items:center;
-  justify-content:center; gap:14px; background:rgba(4,12,7,.74); pointer-events:none;
-  animation:cr-fxin .18s ease;}
-.cr-rollfx.result{animation:cr-fxin .18s ease, cr-fxout .35s ease 1.25s forwards;}
+  justify-content:center; gap:14px; background:rgba(4,12,7,.55); pointer-events:none;
+  animation:cr-fxin .15s ease;}
+.cr-rollfx.result{animation:cr-fxin .15s ease, cr-fxout .25s ease .78s forwards; pointer-events:auto; cursor:pointer;}
 @keyframes cr-fxin{from{opacity:0;} to{opacity:1;}}
 @keyframes cr-fxout{to{opacity:0;}}
 .cr-fx-dice{display:flex; gap:22px;}
