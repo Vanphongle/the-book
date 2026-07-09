@@ -24,6 +24,7 @@ const val = (c) => c.r * 4 + c.s;
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n || 0);
 const cx = (...a) => a.filter(Boolean).join(" ");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function newDeck() {
   const d = [];
@@ -207,6 +208,8 @@ export default function TienLen() {
     turn: 0,
     cur: null, // current combo on the table (+ owner)
     owner: -1,
+    pile: [], // plays of the current trick (for the stacked middle)
+    playSeq: 0,
     passed: new Set(),
     finished: [],
     first: false, // must include 3♠
@@ -222,22 +225,34 @@ export default function TienLen() {
   const [sel, setSel] = useState(new Set()); // selected card values
   const g = G.current;
 
-  function deal() {
-    if (g.phase === "play") return;
+  async function deal() {
+    if (g.phase !== "bet" && g.phase !== "done") return;
     if (bankRef.current < g.bet * 3) { g.msg = "Need 3× the stake to play."; rr(); return; }
-    const deck = newDeck();
-    g.hands = [0, 1, 2, 3].map((i) => sortHand(deck.slice(i * 13, i * 13 + 13)));
+    g.results = null;
+    g.pile = [];
+    g.cur = null;
+    g.hands = [[], [], [], []];
     g.finished = [];
     g.passed = new Set();
-    g.cur = null;
+    g.phase = "shuffle";
+    g.msg = "Shuffling…";
+    setSel(new Set());
+    rr();
+    await sleep(950);
+    if (!aliveRef.current) return;
+    g.phase = "dealing";
+    g.msg = "Dealing…";
+    rr();
+    await sleep(1150);
+    if (!aliveRef.current) return;
+    const deck = newDeck();
+    g.hands = [0, 1, 2, 3].map((i) => sortHand(deck.slice(i * 13, i * 13 + 13)));
     g.owner = -1;
-    g.results = null;
     // 3♠ leads
     g.turn = g.hands.findIndex((h) => h.some((c) => c.r === 3 && c.s === 0));
     g.first = true;
     g.phase = "play";
     g.msg = g.turn === 0 ? "You have the 3♠ — lead with it." : `${NAMES[g.turn]} leads with the 3♠…`;
-    setSel(new Set());
     rr();
   }
 
@@ -259,6 +274,7 @@ export default function TienLen() {
   }
   function clearTrick() {
     g.cur = null;
+    g.pile = [];
     g.passed = new Set();
     let leader = g.owner;
     // if the trick winner already finished, lead passes to the next active player
@@ -273,6 +289,7 @@ export default function TienLen() {
     g.hands[i] = g.hands[i].filter((c) => !ids.has(val(c)));
     g.cur = combo;
     g.owner = i;
+    g.pile = [...g.pile, { cards: combo.cards, owner: i, key: g.playSeq++ }].slice(-5);
     g.first = false;
     g.passed = new Set();
     const bomb = bombPower(combo) > 0;
@@ -391,7 +408,12 @@ export default function TienLen() {
           <div key={i} className={cx("tl-opp", g.phase === "play" && g.turn === i && "turn",
             g.finished.includes(i) && "out", g.passed.has(i) && "passed")}>
             <b>{NAMES[i]}</b>
-            <span className="tl-opp-cards">🂠 {g.hands[i].length}</span>
+            <span className="tl-opp-fan">
+              {Array.from({ length: Math.min(13, g.hands[i].length) }, (_, k) => (
+                <i key={k} style={{ left: k * 5, transform: `rotate(${(k - g.hands[i].length / 2) * 2}deg)` }} />
+              ))}
+              <u>{g.hands[i].length}</u>
+            </span>
             {g.finished.includes(i) && <em>{place(g.finished.indexOf(i) + 1)}</em>}
             {g.passed.has(i) && !g.finished.includes(i) && <em className="p">pass</em>}
           </div>
@@ -400,15 +422,40 @@ export default function TienLen() {
 
       {/* table */}
       <div className="tl-table">
-        {g.cur ? (
+        {g.phase === "shuffle" && (
+          <div className="tl-shuffle">
+            {[0, 1, 2, 3, 4, 5].map((i) => <span key={i} className={`tl-backcard sh${i % 3}`} style={{ animationDelay: `${i * 90}ms` }} />)}
+          </div>
+        )}
+        {g.phase === "dealing" && (
+          <div className="tl-dealfx">
+            <span className="tl-backcard deck" />
+            {Array.from({ length: 16 }, (_, i) => (
+              <span key={i} className={`tl-backcard flyout seat${i % 4}`} style={{ animationDelay: `${i * 65}ms` }} />
+            ))}
+          </div>
+        )}
+        {g.pile.length > 0 ? (
           <>
-            <div className="tl-pile">
-              {g.cur.cards.map((c) => <CardFace key={val(c)} c={c} small />)}
+            <div className="tl-pilestack">
+              {g.pile.map((p, idx, arr) => (
+                <div
+                  key={p.key}
+                  className={cx("tl-flywrap", idx === arr.length - 1 && `flyin seat${p.owner}`)}
+                  style={{ zIndex: idx, opacity: idx === arr.length - 1 ? 1 : 0.45 }}
+                >
+                  <div className="tl-pileplay" style={{ transform: `rotate(${((p.key * 47) % 13) - 6}deg) translate(${((p.key * 31) % 11) - 5}px, ${((p.key * 17) % 7) - 3}px)` }}>
+                    {p.cards.map((c) => <CardFace key={val(c)} c={c} small />)}
+                  </div>
+                </div>
+              ))}
             </div>
             <div className="tl-pile-owner">{NAMES[g.owner]}{bombPower(g.cur) > 0 ? " 💥" : ""}</div>
           </>
         ) : (
-          <div className="tl-pile-empty">{g.phase === "play" ? "new round — lead anything" : ""}</div>
+          g.phase !== "shuffle" && g.phase !== "dealing" && (
+            <div className="tl-pile-empty">{g.phase === "play" ? "new round — lead anything" : ""}</div>
+          )
         )}
       </div>
 
@@ -490,10 +537,53 @@ const CSS = `
 .tl-opp em{position:absolute; top:-8px; right:-4px; font-style:normal; font-size:.56rem; font-weight:900;
   background:var(--green); color:#06230f; border-radius:6px; padding:2px 6px;}
 .tl-opp em.p{background:#7d89a8; color:#101623;}
+.tl-opp-fan{position:relative; height:30px; margin-top:3px; display:block;}
+.tl-opp-fan i{position:absolute; top:2px; width:17px; height:24px; border-radius:3px;
+  background:#27456b; border:1px solid rgba(255,255,255,.4);
+  background-image:repeating-linear-gradient(45deg,#2e5280 0 3px,#27456b 3px 6px); box-shadow:0 1px 2px rgba(0,0,0,.4);}
+.tl-opp-fan u{position:absolute; right:2px; top:5px; text-decoration:none; font-size:.68rem; font-weight:800;
+  color:var(--gold); font-family:var(--mono); text-shadow:0 1px 2px rgba(0,0,0,.7);}
+
+/* card backs + shuffle + dealing fx */
+.tl-backcard{width:44px; height:62px; border-radius:6px; background:#27456b; border:1.5px solid rgba(255,255,255,.45);
+  background-image:repeating-linear-gradient(45deg,#2e5280 0 5px,#27456b 5px 10px); box-shadow:0 3px 7px rgba(0,0,0,.5); display:inline-block;}
+.tl-shuffle{position:relative; width:120px; height:70px;}
+.tl-shuffle .tl-backcard{position:absolute; left:38px; top:0;}
+.tl-shuffle .sh0{animation:tl-riffle0 .5s infinite alternate ease-in-out;}
+.tl-shuffle .sh1{animation:tl-riffle1 .5s infinite alternate-reverse ease-in-out;}
+.tl-shuffle .sh2{animation:tl-riffle2 .45s infinite alternate ease-in-out;}
+@keyframes tl-riffle0{from{transform:translateX(-26px) rotate(-9deg);} to{transform:translateX(4px) rotate(2deg);}}
+@keyframes tl-riffle1{from{transform:translateX(26px) rotate(9deg);} to{transform:translateX(-4px) rotate(-2deg);}}
+@keyframes tl-riffle2{from{transform:translateY(-7px) rotate(3deg);} to{transform:translateY(5px) rotate(-4deg);}}
+.tl-dealfx{position:relative; width:60px; height:70px;}
+.tl-dealfx .deck{position:absolute; left:8px; top:4px;}
+.tl-dealfx .flyout{position:absolute; left:8px; top:4px; opacity:0; animation:none;}
+.tl-dealfx .flyout.seat0{animation:tl-deal0 .55s ease-in forwards;}
+.tl-dealfx .flyout.seat1{animation:tl-deal1 .55s ease-in forwards;}
+.tl-dealfx .flyout.seat2{animation:tl-deal2 .55s ease-in forwards;}
+.tl-dealfx .flyout.seat3{animation:tl-deal3 .55s ease-in forwards;}
+@keyframes tl-deal0{0%{opacity:1; transform:none;} 100%{opacity:0; transform:translate(0,46vh) scale(.6) rotate(20deg);}}
+@keyframes tl-deal1{0%{opacity:1; transform:none;} 100%{opacity:0; transform:translate(-36vw,-16vh) scale(.5) rotate(-30deg);}}
+@keyframes tl-deal2{0%{opacity:1; transform:none;} 100%{opacity:0; transform:translate(0,-18vh) scale(.5) rotate(15deg);}}
+@keyframes tl-deal3{0%{opacity:1; transform:none;} 100%{opacity:0; transform:translate(36vw,-16vh) scale(.5) rotate(30deg);}}
+
+/* played combos fly in from their seat and stack on the pile */
+.tl-pilestack{position:relative; display:flex; align-items:center; justify-content:center; min-height:70px;}
+.tl-flywrap{position:absolute; transition:opacity .3s;}
+.tl-flywrap.flyin.seat0{animation:tl-fly0 .38s cubic-bezier(.2,.8,.3,1);}
+.tl-flywrap.flyin.seat1{animation:tl-fly1 .38s cubic-bezier(.2,.8,.3,1);}
+.tl-flywrap.flyin.seat2{animation:tl-fly2 .38s cubic-bezier(.2,.8,.3,1);}
+.tl-flywrap.flyin.seat3{animation:tl-fly3 .38s cubic-bezier(.2,.8,.3,1);}
+@keyframes tl-fly0{from{transform:translate(0,40vh) scale(.75); opacity:.4;}}
+@keyframes tl-fly1{from{transform:translate(-38vw,-16vh) scale(.7); opacity:.4;}}
+@keyframes tl-fly2{from{transform:translate(0,-18vh) scale(.7); opacity:.4;}}
+@keyframes tl-fly3{from{transform:translate(38vw,-16vh) scale(.7); opacity:.4;}}
+.tl-pileplay{display:flex;}
 
 .tl-table{min-height:110px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:8px;}
 .tl-pile{display:flex;}
-.tl-pile .tl-card{margin-right:-14px; cursor:default;}
+.tl-pileplay{padding-right:12px;}
+.tl-pileplay .tl-card{cursor:default;}
 .tl-pile-owner{font-size:.62rem; color:var(--gold); font-weight:800; letter-spacing:.1em;}
 .tl-pile-empty{color:#5d6c8f; font-size:.74rem;}
 
@@ -512,15 +602,16 @@ const CSS = `
   border-top:1px dashed rgba(232,197,107,.25); margin-top:4px;}
 .tl-hand.myturn{background:linear-gradient(transparent, rgba(232,197,107,.06));}
 .tl-hand-empty{color:#5d6c8f; font-size:.78rem; align-self:center;}
-.tl-card{position:relative; width:46px; height:66px; margin:2px -9px 0 0; border-radius:7px;
+.tl-card{position:relative; width:52px; height:74px; margin:4px -5px 4px 0; border-radius:8px;
   border:1px solid #b9b2a2; background:linear-gradient(150deg,#fdfbf4,#efe9dc); color:#1d232b;
   display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer;
   font-family:Georgia,serif; box-shadow:0 2px 5px rgba(0,0,0,.4); transition:transform .12s; padding:0;}
 .tl-card.red{color:#c22c24;}
-.tl-card.sel{transform:translateY(-14px); box-shadow:0 6px 12px rgba(0,0,0,.5), 0 0 0 2px var(--gold);}
-.tl-card.small{width:40px; height:56px;}
-.tl-card-r{font-size:1rem; font-weight:800; line-height:1;}
-.tl-card-s{font-size:.95rem; line-height:1.1;}
+.tl-card.sel{transform:translateY(-16px); box-shadow:0 6px 12px rgba(0,0,0,.5), 0 0 0 2.5px var(--gold);}
+.tl-card.small{width:42px; height:58px; margin:0 -12px 0 0;}
+.tl-card-r{font-size:1.1rem; font-weight:800; line-height:1;}
+.tl-card-s{font-size:1rem; line-height:1.1;}
+.tl-hand .tl-card{touch-action:manipulation;}
 
 .tl-controls{display:flex; align-items:center; gap:9px; padding:8px 14px calc(16px + env(safe-area-inset-bottom));
   background:rgba(0,0,0,.28); flex-wrap:wrap; justify-content:center;}
