@@ -283,14 +283,29 @@ export default function Roulette() {
   }
 
   // ── SIM ──
+  function betSummary(b) {
+    const parts = [];
+    for (const [n, a] of Object.entries(b.straight || {})) if (a) parts.push(`$${a} on ${n}`);
+    const names = { red: "RED", black: "BLACK", odd: "ODD", even: "EVEN", low: "1-18", high: "19-36", d1: "1st 12", d2: "2nd 12", d3: "3rd 12", c1: "COL 1", c2: "COL 2", c3: "COL 3" };
+    for (const [k, l] of Object.entries(names)) if (b[k]) parts.push(`$${b[k]} ${l}`);
+    return parts.join(" + ");
+  }
+  // the felt bets (or last spin's) become the template for "repeat my bets"
+  const customTemplate = sumBets(g.bets) > 0 ? g.bets : g.lastBets && sumBets(g.lastBets) > 0 ? g.lastBets : null;
+
   function simStart() {
     setSimOpen(false);
+    const template = simCfg.strat === "custom" && customTemplate ? JSON.parse(JSON.stringify(customTemplate)) : null;
     for (const [k, v] of Object.entries(g.bets)) {
       if (k === "straight") for (const amt of Object.values(v)) payBank(amt);
       else if (v) payBank(v);
     }
     g.bets = emptyBets();
-    simRef.current = { running: true, busy: false, spins: 0, startBank: bankRef.current, startRefill: refillAddRef.current, prog: simCfg.unit };
+    simRef.current = {
+      running: true, busy: false, spins: 0,
+      startBank: bankRef.current, startRefill: refillAddRef.current,
+      prog: simCfg.unit, template,
+    };
     setSimStats({ spins: 0, net: 0 });
     setSimRunning(true);
   }
@@ -306,6 +321,19 @@ export default function Roulette() {
     const net = bankRef.current - simRef.current.startBank - (refillAddRef.current - simRef.current.startRefill);
     setSimStats({ spins: simRef.current.spins, net, next: mart ? simRef.current.prog : null });
     simRef.current.spins++;
+    if (simCfg.strat === "custom") {
+      // repeat the player's own layout exactly, every spin
+      const tpl = simRef.current.template;
+      if (!tpl) { simStop(); return; }
+      const cost = sumBets(tpl);
+      if (bankRef.current < cost) return; // wait for refill
+      if (g.phase === "done") { g.phase = "bet"; }
+      payBank(-cost);
+      g.bets = JSON.parse(JSON.stringify(tpl));
+      rr();
+      await spin();
+      return;
+    }
     let wager = mart ? simRef.current.prog : simCfg.unit;
     wager = Math.min(wager, bankRef.current);
     if (wager < CHIPS[0]) return;
@@ -476,6 +504,17 @@ export default function Roulette() {
       {simOpen && (
         <div className="rl-simpanel">
           <div className="rl-simpanel-title">AUTOPILOT</div>
+          <button
+            className={cx("rl-simstrat custom", simCfg.strat === "custom" && "on", !customTemplate && "off")}
+            onClick={() => customTemplate && setSimCfg((c) => ({ ...c, strat: "custom" }))}
+          >
+            <b>♟ Repeat MY bets every spin</b>
+            <i>
+              {customTemplate
+                ? `${betSummary(customTemplate)} — ${money(sumBets(customTemplate))} per spin`
+                : "place chips on the felt first (or spin once), then pick this"}
+            </i>
+          </button>
           {[
             ["red", "Flat bet on RED", "the baseline — 5.26% edge (2.70% on single-zero)"],
             ["mart", "Martingale on RED", "double after every loss — smooth climb, brutal cliffs"],
@@ -488,7 +527,7 @@ export default function Roulette() {
               <i>{sub}</i>
             </button>
           ))}
-          <div className="rl-simamts">
+          <div className="rl-simamts" style={{ opacity: simCfg.strat === "custom" ? 0.35 : 1 }}>
             <span>bet</span>
             {[5, 10, 25, 100].map((a) => (
               <button key={a} className={cx("rl-simamt", simCfg.unit === a && "on")}
@@ -640,6 +679,9 @@ const CSS = `
 .rl-simstrat{display:flex; flex-direction:column; gap:3px; text-align:left; padding:10px 12px;
   border:1.5px solid #2c4a35; border-radius:10px; background:rgba(255,255,255,.03); color:var(--ink); cursor:pointer;}
 .rl-simstrat.on{border-color:var(--gold); background:rgba(216,180,118,.1);}
+.rl-simstrat.custom{border-style:dashed;}
+.rl-simstrat.custom.on{border-style:solid;}
+.rl-simstrat.off{opacity:.5; cursor:default;}
 .rl-simstrat b{font-size:.74rem; font-weight:800;}
 .rl-simstrat i{font-style:normal; font-size:.58rem; color:var(--dim); line-height:1.45;}
 .rl-simamts{display:flex; align-items:center; gap:7px;}
