@@ -112,6 +112,7 @@ export default function Craps() {
   const [chip, setChip] = useState(5);
   const [auto, setAuto] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const [fx, setFx] = useState(null); // center-screen roll overlay: {phase:"tumble"|"result", net, headline}
   const [field12Triple, setField12Triple] = useState(false);
   const [tab, setTab] = useState("hard"); // "hard" | "hop"
   const [undoStack, setUndoStack] = useState([]);
@@ -255,20 +256,25 @@ export default function Craps() {
 
   // ── the roll ────────────────────────────────────────────────────────────────
   const rollTimer = useRef(null);
+  const fxTimer = useRef(null);
   function roll() {
     if (rolling) return;
     setRolling(true);
     setCountdown(0);
+    clearTimeout(fxTimer.current);
+    setFx({ phase: "tumble" });
     const anim = setInterval(() => setDice([rollDie(), rollDie()]), 90);
     rollTimer.current = setTimeout(() => {
       clearInterval(anim);
       const d1 = rollDie(), d2 = rollDie();
       setDice([d1, d2]);
-      resolve(d1, d2);
+      const out = resolve(d1, d2);
+      setFx({ phase: "result", ...out });
+      fxTimer.current = setTimeout(() => setFx(null), 1650);
       setRolling(false);
-    }, 1400);
+    }, 1300);
   }
-  useEffect(() => () => clearTimeout(rollTimer.current), []);
+  useEffect(() => () => { clearTimeout(rollTimer.current); clearTimeout(fxTimer.current); }, []);
 
   useEffect(() => {
     if (!auto || rolling) return;
@@ -288,6 +294,8 @@ export default function Craps() {
     let winnings = 0;
     const events = [];
     const orig = betsRef.current;
+    // wealth (credits + everything on the board) before the roll — for the net
+    const beforeWealth = bankRef.current + sumBets(orig, luckyRef.current);
     let b = JSON.parse(JSON.stringify(orig));
     let L = { ...luckyRef.current, hits: [...luckyRef.current.hits] };
     let newPoint = point;
@@ -488,6 +496,8 @@ export default function Craps() {
     commitLucky(L);
     setPoint(newPoint);
     if (credit > 0) commitBank(bankRef.current + credit);
+    // net for the roll = wealth change (credits + board), before any bust refill
+    const net = bankRef.current + sumBets(b, L) - beforeWealth;
     // busted (can't cover the smallest chip, nothing left working): auto-refill
     if (bankRef.current < CHIPS[0] && sumBets(b, L) === 0) {
       commitBank(START_BANK);
@@ -498,6 +508,15 @@ export default function Craps() {
     say(events.length ? events : [`${total} — no action`]);
     setPrevRound(undoStack);
     setUndoStack([]);
+
+    const headline =
+      mark === "out" ? "SEVEN OUT" :
+      mark === "made" ? `WINNER — ${total}` :
+      mark === "point" ? `POINT IS ${total}` :
+      comeOut && (total === 7 || total === 11) ? `${total} — NATURAL` :
+      comeOut && [2, 3, 12].includes(total) ? `${total} — CRAPS` :
+      `${total}`;
+    return { net, headline };
   }
 
   function cashReset() {
@@ -533,7 +552,7 @@ export default function Craps() {
       <header className="cr-top">
         <a className="cr-back" href="#">←</a>
         <span className="cr-title">BUBBLE CRAPS</span>
-        <span className="cr-dome">
+        <span className="cr-dome" onClick={roll} title="tap to roll" role="button">
           <Die v={dice[0]} rolling={rolling} />
           <Die v={dice[1]} rolling={rolling} />
           <b className={cx("cr-tot", rolling && "dim")}>{rolling ? "…" : total}</b>
@@ -748,6 +767,23 @@ export default function Craps() {
         </main>
       </div>
 
+      {/* center-screen roll: tumbling dice, then the result pops */}
+      {fx && (
+        <div className={cx("cr-fx", fx.phase)}>
+          <div className="cr-fx-dice">
+            <Die v={dice[0]} rolling={fx.phase === "tumble"} />
+            <Die v={dice[1]} rolling={fx.phase === "tumble"} />
+          </div>
+          {fx.phase === "result" && (
+            <>
+              <div className="cr-fx-head">{fx.headline}</div>
+              {fx.net > 0.005 && <div className="cr-fx-net win">+{money(fx.net)}</div>}
+              {fx.net < -0.005 && <div className="cr-fx-net lose">−{money(-fx.net)}</div>}
+            </>
+          )}
+        </div>
+      )}
+
       {/* floating ROLL for portrait phones (thumb zone) */}
       <button className="cr-rollfab" disabled={rolling} onClick={roll}>
         {rolling ? "…" : auto && countdown > 0 ? `${countdown}s` : "ROLL"}
@@ -788,6 +824,31 @@ const CSS = `
 .cr *{box-sizing:border-box;}
 .cr .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
 .cr button{font-family:var(--sans);}
+
+/* center-screen roll overlay */
+.cr-fx{position:fixed; inset:0; z-index:80; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:14px; background:rgba(4,12,7,.74); pointer-events:none;
+  animation:cr-fxin .18s ease;}
+.cr-fx.result{animation:cr-fxin .18s ease, cr-fxout .35s ease 1.25s forwards;}
+@keyframes cr-fxin{from{opacity:0;} to{opacity:1;}}
+@keyframes cr-fxout{to{opacity:0;}}
+.cr-fx-dice{display:flex; gap:22px;}
+.cr-fx .cr-die{width:88px; height:88px; border-radius:16px; padding:11px; gap:3px;
+  box-shadow:0 14px 34px rgba(0,0,0,.6);}
+.cr-fx .cr-die.rolling{animation:cr-fxtumble .3s infinite alternate;}
+@keyframes cr-fxtumble{from{transform:translateY(-16px) rotate(-14deg);} to{transform:translateY(12px) rotate(12deg);}}
+.cr-fx.result .cr-die{animation:cr-fxland .4s cubic-bezier(.2,1.5,.4,1);}
+@keyframes cr-fxland{from{transform:scale(1.35); } to{transform:scale(1);}}
+.cr-fx-head{font-size:1.15rem; font-weight:900; letter-spacing:.26em; color:var(--linec);
+  text-shadow:0 2px 8px rgba(0,0,0,.6); animation:cr-fxpop .45s cubic-bezier(.2,1.6,.4,1);}
+.cr-fx-net{font-family:var(--mono); font-size:2rem; font-weight:800;
+  animation:cr-fxpop .5s cubic-bezier(.2,1.6,.4,1);}
+.cr-fx-net.win{color:var(--yellow); text-shadow:0 0 24px rgba(247,215,116,.65), 0 2px 4px rgba(0,0,0,.5);}
+.cr-fx-net.lose{color:var(--red); text-shadow:0 0 18px rgba(232,87,77,.5), 0 2px 4px rgba(0,0,0,.5);
+  animation:cr-fxpop .5s cubic-bezier(.2,1.6,.4,1), cr-fxshake .4s ease .45s;}
+@keyframes cr-fxpop{from{transform:scale(.3); opacity:0;} 70%{transform:scale(1.15);} to{transform:scale(1); opacity:1;}}
+@keyframes cr-fxshake{0%,100%{transform:translateX(0);} 25%{transform:translateX(-7px);} 50%{transform:translateX(6px);} 75%{transform:translateX(-4px);}}
+.cr-dome{cursor:pointer;}
 
 .cr-rollfab{display:none; position:fixed; right:16px; bottom:calc(18px + env(safe-area-inset-bottom));
   z-index:70; width:78px; height:78px; border-radius:50%; border:3px solid var(--yellow);
