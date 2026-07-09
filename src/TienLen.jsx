@@ -444,7 +444,7 @@ export default function TienLen() {
                   className={cx("tl-flywrap", idx === arr.length - 1 && `flyin seat${p.owner}`)}
                   style={{ zIndex: idx, opacity: idx === arr.length - 1 ? 1 : 0.45 }}
                 >
-                  <div className="tl-pileplay" style={{ transform: `rotate(${((p.key * 47) % 13) - 6}deg) translate(${((p.key * 31) % 11) - 5}px, ${((p.key * 17) % 7) - 3}px)` }}>
+                  <div className="tl-pileplay" style={{ transform: `translate(-50%,-50%) rotate(${((p.key * 47) % 13) - 6}deg) translate(${((p.key * 31) % 11) - 5}px, ${((p.key * 17) % 7) - 3}px) scale(${idx === arr.length - 1 ? 1 : 0.92})` }}>
                     {p.cards.map((c) => <CardFace key={val(c)} c={c} small />)}
                   </div>
                 </div>
@@ -568,8 +568,8 @@ const CSS = `
 @keyframes tl-deal3{0%{opacity:1; transform:none;} 100%{opacity:0; transform:translate(36vw,-16vh) scale(.5) rotate(30deg);}}
 
 /* played combos fly in from their seat and stack on the pile */
-.tl-pilestack{position:relative; display:flex; align-items:center; justify-content:center; min-height:70px;}
-.tl-flywrap{position:absolute; transition:opacity .3s;}
+.tl-pilestack{position:relative; width:100%; min-height:80px;}
+.tl-flywrap{position:absolute; left:50%; top:50%; transition:opacity .3s;}
 .tl-flywrap.flyin.seat0{animation:tl-fly0 .38s cubic-bezier(.2,.8,.3,1);}
 .tl-flywrap.flyin.seat1{animation:tl-fly1 .38s cubic-bezier(.2,.8,.3,1);}
 .tl-flywrap.flyin.seat2{animation:tl-fly2 .38s cubic-bezier(.2,.8,.3,1);}
