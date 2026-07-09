@@ -82,6 +82,24 @@ const sumBets = (b, lucky) =>
   Object.values(b.hop).reduce((s, v) => s + v, 0) +
   (lucky.active || lucky.bet ? lucky.bet : 0);
 
+// Mini chip stack — real stacked casino chips for a bet amount.
+const CHIP_COLOR = { 1: "#7a7a7a", 5: "#c0392b", 10: "#2471a3", 25: "#1e8449", 100: "#151515", 500: "#6c3483" };
+function MiniStack({ amt }) {
+  const den = [500, 100, 25, 10, 5, 1];
+  const list = [];
+  let rem = Math.round(amt);
+  for (const d of den) while (rem >= d && list.length < 6) { list.push(d); rem -= d; }
+  const shown = list.reverse();
+  const size = 18, off = 2.5;
+  return (
+    <span className="cr-mstack" style={{ width: size, height: size + off * Math.max(0, shown.length - 1) }}>
+      {shown.map((d, i) => (
+        <i key={i} style={{ background: CHIP_COLOR[d], width: size, height: size, bottom: i * off, zIndex: i }} />
+      ))}
+    </span>
+  );
+}
+
 // Die face pips (size: css-driven).
 function Die({ v, rolling, mini }) {
   const P = {
@@ -535,7 +553,8 @@ export default function Craps() {
   const Chip = ({ amt, path, locked }) =>
     amt > 0 ? (
       <span className="cr-fchip" onClick={(e) => e.stopPropagation()}>
-        {chipTxt(amt)}
+        <MiniStack amt={amt} />
+        <b className="mono">{chipTxt(amt)}</b>
         {!locked && path && (
           <i className="cr-fx" onClick={(e) => { e.stopPropagation(); removeBet(path); }}>✕</i>
         )}
@@ -552,18 +571,13 @@ export default function Craps() {
       <header className="cr-top">
         <a className="cr-back" href="#">←</a>
         <span className="cr-title">BUBBLE CRAPS</span>
-        <span className="cr-dome" onClick={roll} title="tap to roll" role="button">
-          <Die v={dice[0]} rolling={rolling} />
-          <Die v={dice[1]} rolling={rolling} />
-          <b className={cx("cr-tot", rolling && "dim")}>{rolling ? "…" : total}</b>
+        <span className="cr-topchips">
+          {CHIPS.map((c) => (
+            <button key={c} className={cx("cr-chip sm", `c${c}`, chip === c && "sel")} onClick={() => setChip(c)}>
+              ${c}
+            </button>
+          ))}
         </span>
-        <button className="cr-roll" disabled={rolling} onClick={roll}>
-          {rolling ? "ROLLING…" : "ROLL"}
-        </button>
-        <label className="cr-auto">
-          <input type="checkbox" checked={auto} onChange={(e) => { setAuto(e.target.checked); setCountdown(12); }} />
-          auto{auto && !rolling && <b className={cx(countdown <= 4 && "hot")}> {countdown}s</b>}
-        </label>
         <span className="cr-hist">
           {history.map((h, i) => (
             <em key={i} className={cx(h.mark)}>{h.total}</em>
@@ -654,8 +668,9 @@ export default function Craps() {
               disabled={!point}
             >
               <span className="cr-pucks">{!point && <span className="cr-puck off">OFF</span>}</span>
-              <span className="cr-dc-lbl">DON'T<br />COME<br />BAR <Die v={6} mini /><Die v={6} mini /></span>
+              <span className="cr-dc-lbl">DON'T COME</span>
               <Chip amt={bets.dontComeFlat} path="dontComeFlat" />
+              {!point && <span className="cr-band-hint">opens when the point is ON</span>}
             </button>
 
             {POINTS.map((n) => (
@@ -719,6 +734,7 @@ export default function Craps() {
               >
                 COME
                 <Chip amt={bets.comeFlat} path="comeFlat" />
+                {!point && <span className="cr-band-hint">opens when the point is ON</span>}
               </button>
 
               <button className={cx("cr-band field", bets.field > 0 && "has")} onClick={() => place("field")}>
@@ -791,11 +807,10 @@ export default function Craps() {
 
       {/* bottom rack */}
       <footer className="cr-rack">
-        {CHIPS.map((c) => (
-          <button key={c} className={cx("cr-chip", `c${c}`, chip === c && "sel")} onClick={() => setChip(c)}>
-            ${c}
-          </button>
-        ))}
+        <label className="cr-auto">
+          <input type="checkbox" checked={auto} onChange={(e) => { setAuto(e.target.checked); setCountdown(12); }} />
+          auto-roll{auto && !rolling && <b className={cx(countdown <= 4 && "hot")}> {countdown}s</b>}
+        </label>
         <span className="cr-actions">
           <button onClick={undoLast} disabled={!undoStack.length}>UNDO</button>
           <button onClick={repeatLast} disabled={!prevRound.length}>REPEAT</button>
@@ -850,7 +865,10 @@ const CSS = `
 @keyframes cr-fxshake{0%,100%{transform:translateX(0);} 25%{transform:translateX(-7px);} 50%{transform:translateX(6px);} 75%{transform:translateX(-4px);}}
 .cr-dome{cursor:pointer;}
 
-.cr-rollfab{display:none; position:fixed; right:16px; bottom:calc(18px + env(safe-area-inset-bottom));
+.cr-topchips{display:flex; gap:6px; align-items:center; flex-shrink:0;}
+.cr-chip.sm{width:36px; height:36px; font-size:.62rem; border-width:2.5px;}
+
+.cr-rollfab{display:flex; position:fixed; right:16px; bottom:calc(18px + env(safe-area-inset-bottom));
   z-index:70; width:78px; height:78px; border-radius:50%; border:3px solid var(--yellow);
   background:radial-gradient(circle at 35% 30%, #d4a940, #8a6c1e); color:#fff; font-weight:900;
   letter-spacing:.06em; font-size:.86rem; cursor:pointer; align-items:center; justify-content:center;
@@ -934,11 +952,12 @@ const CSS = `
   border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:10px;}
 
 /* number boxes */
-.cr-numrow{display:grid; grid-template-columns:1.1fr repeat(6,1fr); gap:7px;}
+.cr-numrow{display:grid; grid-template-columns:1.1fr repeat(6,1fr); gap:7px; margin-top:14px;}
 .cr-box{position:relative; border:2px solid var(--linec); border-radius:8px; background:rgba(255,255,255,.03);
-  display:flex; flex-direction:column; min-height:150px; color:var(--ink); overflow:hidden;}
+  display:flex; flex-direction:column; min-height:124px; color:var(--ink);}
 .cr-box.ispoint{box-shadow:0 0 0 3px var(--yellow); border-color:var(--yellow);}
-.cr-pucks{height:26px; display:flex; align-items:center; justify-content:center;}
+/* puck floats on the box's top edge — no reserved gap inside */
+.cr-pucks{position:absolute; top:-12px; left:0; right:0; display:flex; justify-content:center; z-index:6; pointer-events:none;}
 .cr-puck{width:34px; height:22px; border-radius:11px; display:flex; align-items:center; justify-content:center;
   font-size:.58rem; font-weight:900; letter-spacing:.08em;}
 .cr-puck.on{background:#f5f0e6; color:#111;}
@@ -959,10 +978,11 @@ const CSS = `
 .cr-pbf.has{background:rgba(247,215,116,.15);}
 .cr-layzone{border:none; border-top:1.5px solid var(--linec); background:rgba(0,0,0,.18); color:#e8b7b2;
   font-size:.5rem; font-weight:800; letter-spacing:.14em; padding:3px; cursor:pointer;}
-.cr-dcbar{background:rgba(0,0,0,.22); cursor:pointer; align-items:center; justify-content:flex-start; gap:6px; padding-bottom:8px;}
-.cr-dcbar:disabled{opacity:.55; cursor:default;}
-.cr-dc-lbl{font-size:.62rem; font-weight:800; letter-spacing:.1em; line-height:1.5; text-align:center; color:var(--ink);}
+.cr-dcbar{background:rgba(0,0,0,.22); cursor:pointer; align-items:center; justify-content:center; gap:6px; padding:8px 4px;}
+.cr-dcbar:disabled{opacity:.8; cursor:default; border-style:dashed;}
+.cr-dc-lbl{font-size:.6rem; font-weight:800; letter-spacing:.12em; text-align:center; color:var(--ink);}
 .cr-dcbar.has{background:rgba(247,215,116,.14);}
+.cr-band-hint{font-size:.5rem; letter-spacing:.05em; color:var(--dim); font-weight:600; text-transform:none;}
 
 /* lower felt */
 .cr-lower{display:grid; grid-template-columns:56px 92px 1fr; gap:8px;}
@@ -981,7 +1001,8 @@ const CSS = `
   border:2px solid var(--linec); border-radius:8px; background:rgba(255,255,255,.03); color:var(--ink);
   font-weight:900; letter-spacing:.2em; cursor:pointer; padding:10px 8px; font-size:.95rem;}
 .cr-band.has{background:rgba(247,215,116,.12); border-color:var(--yellow);}
-.cr-band:disabled{opacity:.5; cursor:default;}
+.cr-band:disabled{opacity:.8; cursor:default; border-style:dashed;}
+.cr-band:disabled .cr-band-hint{color:var(--yellow);}
 .cr-band.come{font-size:1.25rem; padding:13px;}
 .cr-band.field{flex-direction:column; gap:2px; letter-spacing:.1em; background:rgba(0,0,0,.14);}
 .cr-field-lbl{font-size:1rem;}
@@ -998,15 +1019,18 @@ const CSS = `
   border-radius:6px; padding:2px 6px; letter-spacing:.02em; display:inline-flex; gap:4px; align-items:center;}
 .cr-hintz{position:absolute; right:8px; bottom:3px; font-size:.5rem; letter-spacing:.04em; color:var(--dim); font-weight:600;}
 
-/* felt chips */
-.cr-fchip{display:inline-flex; align-items:center; gap:3px; background:radial-gradient(circle at 40% 35%, #ffe9a8, #d4a940);
-  color:#241c05; border:2px dashed #8a6c1e; border-radius:14px; padding:2px 8px;
-  font-family:var(--mono); font-weight:800; font-size:.62rem; box-shadow:0 2px 5px var(--shadow); cursor:default;}
-.cr-fx{font-style:normal; cursor:pointer; color:#5e4a12; font-size:.6rem;}
-.cr-fx:hover{color:var(--redish);}
+/* felt chips — mini stacks of real chips + amount */
+.cr-fchip{display:inline-flex; align-items:flex-end; gap:4px; cursor:default;}
+.cr-fchip b{font-size:.6rem; font-weight:800; color:var(--yellow); text-shadow:0 1px 2px rgba(0,0,0,.6);}
+.cr-mstack{position:relative; display:inline-block; flex-shrink:0;}
+.cr-mstack i{position:absolute; left:0; border-radius:50%; border:1.5px dashed rgba(255,255,255,.65);
+  box-shadow:0 1px 2px rgba(0,0,0,.5); box-sizing:border-box;}
+.cr-fx{font-style:normal; cursor:pointer; color:#cfe3cf; font-size:.6rem; background:rgba(0,0,0,.4);
+  border-radius:50%; width:15px; height:15px; display:inline-flex; align-items:center; justify-content:center;}
+.cr-fx:hover{color:var(--red);}
 
 /* bottom rack */
-.cr-rack{display:flex; align-items:center; gap:9px; padding:10px 14px 16px; flex-wrap:wrap;}
+.cr-rack{display:flex; align-items:center; gap:12px; padding:10px 110px 16px 14px; flex-wrap:wrap;}
 .cr-chip{width:44px; height:44px; border-radius:50%; font-weight:800; cursor:pointer; color:#fff;
   border:3px dashed rgba(255,255,255,.6); font-size:.76rem; flex-shrink:0;}
 .cr-chip.c1{background:#7a7a7a;} .cr-chip.c5{background:#c0392b;} .cr-chip.c10{background:#2471a3;}
@@ -1051,8 +1075,7 @@ const CSS = `
   .cr-onegrid{grid-template-columns:repeat(3,1fr);}
   .cr-hopgrid{grid-template-columns:repeat(5,1fr);}
 
-  /* floating ROLL + clearance so it never covers the rack */
-  .cr-rollfab{display:flex;}
+  /* clearance so the floating ROLL never covers the rack */
   .cr-rack{padding-bottom:100px; padding-right:100px;}
 }
 `;
