@@ -135,18 +135,46 @@ function bestMove(hand, up, opts) {
   const isPair = cards.length === 2 && VAL(cards[0].r) === VAL(cards[1].r);
   const pairOf8 = isPair && VAL(cards[0].r) === 8;
 
-  // counting deviations (the famous ones)
+  // counting deviations — Illustrious 18 (subset) + Fab 4 surrenders
+  let skip15v10Surr = false;
   if (opts.count) {
-    if (!v.soft && v.total === 16 && d === 10 && opts.tc > 0 && !isPair) return "stand";
-    if (!v.soft && v.total === 15 && d === 10 && opts.tc >= 4) return "stand";
-    if (!v.soft && v.total === 12 && d === 3 && opts.tc >= 2) return "stand";
-    if (!v.soft && v.total === 12 && d === 2 && opts.tc >= 3) return "stand";
+    const tc = opts.tc;
+    const hard = !v.soft;
+    // Fab 4 surrender indices
+    if (opts.canSurr && hard) {
+      if (v.total === 14 && d === 10 && tc >= 3) return "surrender";
+      if (v.total === 15 && d === 9 && tc >= 2) return "surrender";
+      if (v.total === 15 && d === 10 && tc < 0) skip15v10Surr = true; // take the hit instead
+    }
+    // stands
+    if (hard && v.total === 16 && d === 10 && tc > 0 && !isPair) return "stand";
+    if (hard && v.total === 16 && d === 9 && tc >= 4) return "stand";
+    if (hard && v.total === 15 && d === 10 && tc >= 4 && !opts.canSurr) return "stand";
+    if (hard && v.total === 12 && d === 3 && tc >= 2) return "stand";
+    if (hard && v.total === 12 && d === 2 && tc >= 3) return "stand";
+    // negative-count hits (forced play at bad counts)
+    if (hard && v.total === 12 && d === 4 && tc < 0) return "hit";
+    if (hard && v.total === 13 && d === 2 && tc < -1) return "hit";
+    if (hard && v.total === 13 && d === 3 && tc < -2) return "hit";
+    // doubles
+    if (opts.canDouble && hard) {
+      if (v.total === 11 && d === 11 && tc >= 1) return "double";
+      if (v.total === 10 && d === 10 && tc >= 4) return "double";
+      if (v.total === 10 && d === 11 && tc >= 3) return "double";
+      if (v.total === 9 && d === 2 && tc >= 1) return "double";
+      if (v.total === 9 && d === 7 && tc >= 3) return "double";
+    }
+    // the famous 10,10 splits vs 5/6 at high counts
+    if (isPair && VAL(cards[0].r) === 10 && opts.canSplit) {
+      if (d === 6 && tc >= 4) return "split";
+      if (d === 5 && tc >= 5) return "split";
+    }
   }
 
   // late surrender
   if (opts.canSurr && !v.soft) {
     if (v.total === 16 && !pairOf8 && [9, 10, 11].includes(d)) return "surrender";
-    if (v.total === 15 && (d === 10 || (opts.h17 && d === 11))) return "surrender";
+    if (v.total === 15 && ((d === 10 && !skip15v10Surr) || (opts.h17 && d === 11))) return "surrender";
     if (opts.h17 && pairOf8 && d === 11) return "surrender"; // 8,8 vs A (H17)
     if (opts.h17 && v.total === 17 && d === 11) return "surrender";
   }
@@ -806,7 +834,7 @@ export default function Blackjack() {
           <div className="bj-simpanel-title">AUTOPILOT</div>
           {[
             ["basic", "Perfect basic strategy", "plays the book on every hand — flat bets, never takes insurance"],
-            ["count", "Hi-Lo card counter", "basic strategy + bet spread 1-12x by true count, insurance at TC ≥ +3, key deviations"],
+            ["count", "Hi-Lo card counter", "basic strategy + bet spread 1-12x by true count, insurance at TC ≥ +3, Illustrious-18 & Fab-4 deviations"],
           ].map(([k, lbl, sub]) => (
             <button
               key={k}
