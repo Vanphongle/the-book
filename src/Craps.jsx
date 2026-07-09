@@ -1063,8 +1063,10 @@ const CSS = `
 
   /* numbers: 3 × 2 grid, Don't Come bar spans the full row above them */
   .cr-numrow{grid-template-columns:repeat(3,1fr); gap:8px;}
-  .cr-dcbar .cr-band-hint{font-size:.44rem;}
   .cr-box{min-height:104px;}
+  /* AFTER .cr-box so it can't be re-inflated (dcbar is also a .cr-box) */
+  .cr-dcbar{min-height:0; height:40px;}
+  .cr-dcbar .cr-band-hint{font-size:.44rem;}
   .cr-bignum{font-size:1.8rem;}
 
   /* lower felt: bands full-width, then quick-set row, then C/C&E/E row */
