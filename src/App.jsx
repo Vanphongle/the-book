@@ -882,6 +882,9 @@ export default function App() {
           <a className="bk-craps-link" href="#/blackjack" onClick={() => setDrawerOpen(false)}>
             🃏 Blackjack
           </a>
+          <a className="bk-craps-link" href="#/baccarat" onClick={() => setDrawerOpen(false)}>
+            🎴 Baccarat
+          </a>
           <div className="bk-drawer-hint">
             Settle days from the list — tick the days you've settled and tap
             “Settle”. Nothing is deleted; settled days move to past periods.
