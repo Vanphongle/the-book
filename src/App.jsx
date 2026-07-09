@@ -130,6 +130,7 @@ export default function App() {
 
   // Players drawer + the active player filter (null = all players).
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [gamesOpen, setGamesOpen] = useState(false);
   const [filter, setFilter] = useState(null);
   const [addingPlayer, setAddingPlayer] = useState(false);
   const [drawerNewName, setDrawerNewName] = useState("");
@@ -876,18 +877,6 @@ export default function App() {
         )}
 
         <div className="bk-drawer-foot">
-          <a className="bk-craps-link" href="#/craps" onClick={() => setDrawerOpen(false)}>
-            🎲 Bubble Craps
-          </a>
-          <a className="bk-craps-link" href="#/blackjack" onClick={() => setDrawerOpen(false)}>
-            🃏 Blackjack
-          </a>
-          <a className="bk-craps-link" href="#/baccarat" onClick={() => setDrawerOpen(false)}>
-            🎴 Baccarat
-          </a>
-          <a className="bk-craps-link" href="#/roulette" onClick={() => setDrawerOpen(false)}>
-            🎡 Roulette
-          </a>
           <div className="bk-drawer-hint">
             Settle days from the list — tick the days you've settled and tap
             “Settle”. Nothing is deleted; settled days move to past periods.
@@ -906,6 +895,22 @@ export default function App() {
               ☰
             </button>
             <span className="bk-title">The Book</span>
+          </div>
+          <div className="bk-games">
+            <button className="bk-games-btn" onClick={() => setGamesOpen((v) => !v)} aria-expanded={gamesOpen}>
+              🎮 Games {gamesOpen ? "▴" : "▾"}
+            </button>
+            {gamesOpen && (
+              <>
+                <div className="bk-games-scrim" onClick={() => setGamesOpen(false)} />
+                <div className="bk-games-menu">
+                  <a href="#/craps" onClick={() => setGamesOpen(false)}>🎲 Bubble Craps</a>
+                  <a href="#/blackjack" onClick={() => setGamesOpen(false)}>🃏 Blackjack</a>
+                  <a href="#/baccarat" onClick={() => setGamesOpen(false)}>🎴 Baccarat</a>
+                  <a href="#/roulette" onClick={() => setGamesOpen(false)}>🎡 Roulette</a>
+                </div>
+              </>
+            )}
           </div>
         </header>
 
@@ -1335,9 +1340,20 @@ const CSS = `
 .bk-player-item.on .bk-player-count{color:var(--brass-dim);}
 .bk-drawer-empty{color:var(--faint); font-size:.8rem; padding:10px 12px;}
 .bk-drawer-foot{margin-top:auto; padding-top:14px; border-top:1px solid var(--line);}
-.bk-craps-link{display:block; text-align:center; margin-bottom:12px; padding:11px; border:1px dashed var(--brass-dim);
-  border-radius:10px; color:var(--brass); text-decoration:none; font-size:.82rem; font-weight:700;}
-.bk-craps-link:hover{border-color:var(--brass); background:rgba(203,162,78,.1);}
+/* Games dropdown (header, top right) */
+.bk-games{position:relative;}
+.bk-games-btn{padding:8px 13px; border:1px solid var(--brass-dim); border-radius:10px;
+  background:rgba(203,162,78,.1); color:var(--brass); font-size:.78rem; font-weight:700;
+  cursor:pointer; font-family:var(--sans);}
+.bk-games-btn:hover{border-color:var(--brass);}
+.bk-games-scrim{position:fixed; inset:0; z-index:44;}
+.bk-games-menu{position:absolute; right:0; top:calc(100% + 8px); z-index:45; min-width:190px;
+  background:var(--panel); border:1px solid var(--line2); border-radius:12px; padding:6px;
+  box-shadow:0 10px 30px rgba(0,0,0,.5); display:flex; flex-direction:column; gap:2px;
+  animation:bk-in .15s ease;}
+.bk-games-menu a{display:block; padding:11px 13px; border-radius:8px; color:var(--ink);
+  text-decoration:none; font-size:.88rem; font-weight:600;}
+.bk-games-menu a:hover{background:rgba(203,162,78,.12); color:var(--brass);}
 .bk-drawer-hint{font-size:.72rem; color:var(--faint); line-height:1.5; padding:0 6px;}
 
 /* Day picker in the add form */
