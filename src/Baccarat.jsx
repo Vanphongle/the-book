@@ -253,7 +253,11 @@ export default function Baccarat() {
     // refund anything already on the felt so the sim starts clean
     for (const k of Object.keys(g.bets)) if (g.bets[k]) payBank(g.bets[k]);
     g.bets = emptyBets();
-    simRef.current = { running: true, busy: false, hands: 0, startBank: bankRef.current, startRefill: refillAddRef.current };
+    simRef.current = {
+      running: true, busy: false, hands: 0,
+      startBank: bankRef.current, startRefill: refillAddRef.current,
+      prog: simCfg.unit, streak: 0, // progression state (martingale / paroli)
+    };
     setSimStats({ hands: 0, net: 0 });
     setSimRunning(true);
   }
@@ -265,17 +269,36 @@ export default function Baccarat() {
   }
   async function simTurn() {
     if (g.phase === "dealing") return;
+    const progression = simCfg.strat === "martingale" || simCfg.strat === "paroli";
     const net = bankRef.current - simRef.current.startBank - (refillAddRef.current - simRef.current.startRefill);
-    setSimStats({ hands: simRef.current.hands, net });
+    setSimStats({ hands: simRef.current.hands, net, next: progression ? simRef.current.prog : null });
     simRef.current.hands++;
-    const k = simCfg.strat === "streak" ? lastWinner() || "banker" : simCfg.strat;
-    const unit = Math.min(simCfg.unit, Math.max(bankRef.current, CHIPS[0]));
-    if (bankRef.current < unit) return;
+
+    const k = simCfg.strat === "streak" ? lastWinner() || "banker" : progression ? "banker" : simCfg.strat;
+    let wager = progression ? simRef.current.prog : simCfg.unit;
+    wager = Math.min(wager, bankRef.current); // bankroll is the wall martingale hits
+    if (wager < CHIPS[0]) return; // wait for the bust refill
     if (g.phase === "done") { g.p = []; g.b = []; g.phase = "bet"; }
-    payBank(-unit);
-    g.bets = { ...emptyBets(), [k]: unit };
+    payBank(-wager);
+    g.bets = { ...emptyBets(), [k]: wager };
     rr();
     await deal();
+
+    // progression bookkeeping off the result (ties push — bet repeats unchanged)
+    if (progression) {
+      const last = g.road[g.road.length - 1];
+      if (last && last.w === "B") {
+        if (simCfg.strat === "martingale") simRef.current.prog = simCfg.unit;
+        else {
+          simRef.current.streak++;
+          if (simRef.current.streak >= 3) { simRef.current.streak = 0; simRef.current.prog = simCfg.unit; }
+          else simRef.current.prog = wager * 2;
+        }
+      } else if (last && last.w === "P") {
+        if (simCfg.strat === "martingale") simRef.current.prog = wager * 2;
+        else { simRef.current.prog = simCfg.unit; simRef.current.streak = 0; }
+      }
+    }
   }
   useEffect(() => {
     if (!simRunning || simRef.current.busy) return;
@@ -418,7 +441,7 @@ export default function Baccarat() {
       </button>
       {simStats && (
         <div className="bc-simstats">
-          <span>{simStats.hands} hands</span>
+          <span>{simStats.hands} hands{simStats.next ? ` · next bet ${money(simStats.next)}` : ""}</span>
           <b className={cx("mono", simStats.net >= 0 ? "pos" : "neg")}>
             {simStats.net >= 0 ? "+" : "−"}{money(Math.abs(simStats.net))}
           </b>
@@ -431,6 +454,8 @@ export default function Baccarat() {
             ["banker", "Always BANKER", "the best bet in baccarat — 1.06% house edge"],
             ["player", "Always PLAYER", "1.24% edge — nearly as good, no commission math"],
             ["streak", "Follow the streak", "bet whatever won last (superstition — same edge as its parts)"],
+            ["martingale", "Martingale on BANKER", "double after every loss, reset on a win — feels unbeatable until the losing streak your bankroll can't double past"],
+            ["paroli", "Paroli on BANKER", "the mirror: double after wins (3-step), reset on a loss — same edge, gentler crashes"],
             ["tie", "Always TIE (for science)", "14.4% edge — watch it burn"],
           ].map(([k, lbl, sub]) => (
             <button key={k} className={cx("bc-simstrat", simCfg.strat === k && "on")}
