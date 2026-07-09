@@ -528,7 +528,6 @@ export default function Craps() {
   return (
     <div className="cr">
       <style>{CSS}</style>
-      <div className="cr-rotate">↻ Rotate your phone — the table plays sideways, like the machine.</div>
 
       {/* top strip: dome + controls + meters */}
       <header className="cr-top">
@@ -749,6 +748,11 @@ export default function Craps() {
         </main>
       </div>
 
+      {/* floating ROLL for portrait phones (thumb zone) */}
+      <button className="cr-rollfab" disabled={rolling} onClick={roll}>
+        {rolling ? "…" : auto && countdown > 0 ? `${countdown}s` : "ROLL"}
+      </button>
+
       {/* bottom rack */}
       <footer className="cr-rack">
         {CHIPS.map((c) => (
@@ -777,7 +781,7 @@ const CSS = `
   --ink:#f3ead2; --dim:#cfe3cf; --shadow:rgba(0,0,0,.45);
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  font-family:var(--sans); color:var(--ink); min-height:100vh;
+  font-family:var(--sans); color:var(--ink); min-height:100vh; min-height:100dvh;
   background:radial-gradient(ellipse at 50% 0%, #11291a, #0a1810 70%);
   -webkit-font-smoothing:antialiased; user-select:none;
 }
@@ -785,9 +789,13 @@ const CSS = `
 .cr .mono{font-family:var(--mono); font-variant-numeric:tabular-nums;}
 .cr button{font-family:var(--sans);}
 
-.cr-rotate{display:none; background:#3a2c10; color:var(--yellow); text-align:center;
-  font-size:.78rem; padding:8px;}
-@media (orientation:portrait) and (max-width:760px){ .cr-rotate{display:block;} }
+.cr-rollfab{display:none; position:fixed; right:16px; bottom:calc(18px + env(safe-area-inset-bottom));
+  z-index:70; width:78px; height:78px; border-radius:50%; border:3px solid var(--yellow);
+  background:radial-gradient(circle at 35% 30%, #d4a940, #8a6c1e); color:#fff; font-weight:900;
+  letter-spacing:.06em; font-size:.86rem; cursor:pointer; align-items:center; justify-content:center;
+  box-shadow:0 6px 18px rgba(0,0,0,.55), inset 0 -4px 0 rgba(0,0,0,.25);}
+.cr-rollfab:disabled{opacity:.6;}
+.cr-rollfab:active{transform:translateY(2px);}
 
 /* ── top strip ── */
 .cr-top{display:flex; align-items:center; gap:12px; padding:8px 12px; flex-wrap:nowrap;
@@ -948,4 +956,42 @@ const CSS = `
   padding:10px 13px; font-size:.66rem; font-weight:800; letter-spacing:.06em; cursor:pointer;}
 .cr-actions button:disabled{opacity:.35; cursor:default;}
 .cr-f12{margin-left:auto; display:flex; gap:6px; align-items:center; font-size:.68rem; color:#7fa38a; cursor:pointer;}
+
+/* ── PORTRAIT PHONES: single-column reflow (desktop keeps the wide machine) ── */
+@media (max-width:760px){
+  .cr{overflow-x:hidden;}
+  .cr-body{display:flex; flex-direction:column; min-width:0; gap:12px;}
+  .cr-felt{order:1;}
+  .cr-left{order:2;}
+
+  /* top strip wraps; history gets its own scrollable line */
+  .cr-top{flex-wrap:wrap; overflow:visible; justify-content:center; row-gap:8px;}
+  .cr-hist{flex-basis:100%; order:10; overflow-x:auto; justify-content:flex-start; min-width:0;}
+  .cr-meters{gap:12px;}
+
+  /* numbers: 3 × 2 grid, Don't Come bar spans the full row above them */
+  .cr-numrow{grid-template-columns:repeat(3,1fr); gap:8px;}
+  .cr-dcbar{grid-column:1/-1; flex-direction:row; min-height:52px; justify-content:center; align-items:center; padding:6px;}
+  .cr-dcbar .cr-dc-lbl br{display:none;}
+  .cr-dcbar .cr-pucks{height:auto;}
+  .cr-box{min-height:158px;}
+  .cr-bignum{font-size:2.6rem;}
+
+  /* lower felt: bands full-width, then quick-set row, then C/C&E/E row */
+  .cr-lower{display:flex; flex-direction:column; gap:10px;}
+  .cr-bands{order:1;}
+  .cr-sets{order:2; flex-direction:row; gap:7px;}
+  .cr-sets button{flex:1; padding:13px 2px;}
+  .cr-ce{order:3; flex-direction:row; gap:14px;}
+  .cr-circ{width:56px; height:56px;}
+
+  /* left panel content sizes for a full-width column */
+  .cr-hardgrid{grid-template-columns:repeat(4,1fr);}
+  .cr-onegrid{grid-template-columns:repeat(3,1fr);}
+  .cr-hopgrid{grid-template-columns:repeat(5,1fr);}
+
+  /* floating ROLL + clearance so it never covers the rack */
+  .cr-rollfab{display:flex;}
+  .cr-rack{padding-bottom:100px; padding-right:100px;}
+}
 `;
