@@ -330,6 +330,15 @@ export default function Craps() {
     if (s === "buyacross" && point != null) {
       for (const n of [4, 5, 9, 10]) top(["buy", n], amt);
     }
+    // your play, optimized: field every roll + all six numbers always up —
+    // buys on 4/5/9/10 (true odds −5% vig beats place), place on 6/8 (7:6 beats
+    // buy). Anything the table takes down gets put right back.
+    if (s === "fieldacross") {
+      top("field", amt);
+      top(["place", 6], amt);
+      top(["place", 8], amt);
+      for (const n of [4, 5, 9, 10]) top(["buy", n], amt);
+    }
   }
 
   function simStart() {
@@ -967,6 +976,7 @@ export default function Craps() {
             ["pass68", "Pass + odds + place 6 & 8", "action on the big numbers"],
             ["buyacross", "Pass + odds + buy 4-5-9-10 + place 6-8", "everything covered, done right"],
             ["dpmax", "Don't pass + 6x lay odds", "the dark side"],
+            ["fieldacross", "Field + all numbers, always up", "your play optimized — buys 4-5-9-10, places 6-8, rebets the field every roll"],
           ].map(([k, lbl, sub]) => (
             <button
               key={k}
