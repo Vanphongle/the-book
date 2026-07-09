@@ -578,11 +578,6 @@ export default function Craps() {
             </button>
           ))}
         </span>
-        <span className="cr-hist">
-          {history.map((h, i) => (
-            <em key={i} className={cx(h.mark)}>{h.total}</em>
-          ))}
-        </span>
         <span className="cr-meters">
           <span><b className="mono">{money(bank)}</b><i>credits</i></span>
           <span><b className="mono">{money(onBoard)}</b><i>on board</i></span>
@@ -590,7 +585,15 @@ export default function Craps() {
         </span>
         <button className="cr-reset" onClick={cashReset}>Reset</button>
       </header>
-      <div className="cr-log">{log[0]}</div>
+      {/* roll history strip (replaces the message line — results pop center-screen) */}
+      <div className="cr-log">
+        <span className="cr-hist">
+          {history.length === 0 && <em className="empty">roll history</em>}
+          {history.map((h, i) => (
+            <em key={i} className={cx(h.mark)}>{h.total}</em>
+          ))}
+        </span>
+      </div>
 
       {/* machine body */}
       <div className="cr-body">
@@ -899,7 +902,7 @@ const CSS = `
 .cr-auto b{font-family:var(--mono); color:#7de89b;}
 .cr-auto b.hot{color:var(--red); animation:cr-bl .5s infinite alternate;}
 @keyframes cr-bl{from{opacity:1;}to{opacity:.35;}}
-.cr-hist{display:flex; gap:4px; overflow:hidden; flex:1; min-width:60px;}
+.cr-hist{display:flex; gap:4px; overflow-x:auto; flex:1; min-width:0;}
 .cr-hist em{font-style:normal; font-family:var(--mono); font-size:.72rem; font-weight:700;
   background:#12271a; border:1px solid #24422f; border-radius:5px; padding:2px 6px; color:var(--dim); flex-shrink:0;}
 .cr-hist em.out{color:var(--red); border-color:var(--red);}
@@ -912,7 +915,8 @@ const CSS = `
 .cr-meters i{font-style:normal; font-size:.54rem; text-transform:uppercase; letter-spacing:.1em; color:#7fa38a;}
 .cr-reset{background:transparent; border:1px solid #3a5a44; color:#7fa38a; border-radius:8px;
   padding:6px 10px; font-size:.68rem; cursor:pointer; flex-shrink:0;}
-.cr-log{padding:4px 14px; font-size:.72rem; color:#a8c8ae; background:#0a1a10; min-height:24px;}
+.cr-log{padding:5px 12px; background:#0a1a10; min-height:34px; display:flex; align-items:center;}
+.cr-hist em.empty{color:#527a5e; border-style:dashed;}
 
 /* ── body: two panels ── */
 .cr-body{display:grid; grid-template-columns:250px 1fr; gap:10px; padding:10px; min-width:820px;}
@@ -952,7 +956,7 @@ const CSS = `
   border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:10px;}
 
 /* number boxes */
-.cr-numrow{display:grid; grid-template-columns:1.1fr repeat(6,1fr); gap:7px; margin-top:14px;}
+.cr-numrow{display:grid; grid-template-columns:repeat(6,1fr); gap:7px; margin-top:14px;}
 .cr-box{position:relative; border:2px solid var(--linec); border-radius:8px; background:rgba(255,255,255,.03);
   display:flex; flex-direction:column; min-height:104px; color:var(--ink);}
 .cr-box.ispoint{box-shadow:0 0 0 3px var(--yellow); border-color:var(--yellow);}
@@ -978,9 +982,12 @@ const CSS = `
 .cr-pbf.has{background:rgba(247,215,116,.15);}
 .cr-layzone{border:none; border-top:1.5px solid var(--linec); background:rgba(0,0,0,.18); color:#e8b7b2;
   font-size:.5rem; font-weight:800; letter-spacing:.14em; padding:3px; cursor:pointer;}
-.cr-dcbar{background:rgba(0,0,0,.22); cursor:pointer; align-items:center; justify-content:center; gap:5px;
-  padding:4px; min-height:0;}
+/* Don't Come — always a slim full-width strip, same height as Don't Pass */
+.cr-dcbar{grid-column:1/-1; flex-direction:row; height:40px; min-height:0;
+  background:rgba(0,0,0,.22); cursor:pointer; align-items:center; justify-content:center; gap:8px; padding:0 8px;}
 .cr-dcbar:disabled{opacity:.75; cursor:default; border-style:dashed;}
+.cr-dcbar .cr-pucks{position:static; pointer-events:none;}
+.cr-dcbar .cr-puck{width:28px; height:16px; font-size:.46rem;}
 .cr-dc-lbl{font-size:.5rem; font-weight:800; letter-spacing:.1em; text-align:center; color:var(--dim);}
 .cr-dcbar.has{background:rgba(247,215,116,.14);}
 .cr-band-hint{font-size:.5rem; letter-spacing:.05em; color:var(--dim); font-weight:600; text-transform:none;}
@@ -1050,18 +1057,13 @@ const CSS = `
   .cr-felt{order:1;}
   .cr-left{order:2;}
 
-  /* top strip wraps; history gets its own scrollable line */
+  /* top strip wraps on phones */
   .cr-top{flex-wrap:wrap; overflow:visible; justify-content:center; row-gap:8px;}
-  .cr-hist{flex-basis:100%; order:10; overflow-x:auto; justify-content:flex-start; min-width:0;}
   .cr-meters{gap:12px;}
 
   /* numbers: 3 × 2 grid, Don't Come bar spans the full row above them */
   .cr-numrow{grid-template-columns:repeat(3,1fr); gap:8px;}
-  /* Don't Come: a tiny one-line strip — rarely used, shouldn't dominate */
-  .cr-dcbar{grid-column:1/-1; flex-direction:row; min-height:28px; justify-content:center; align-items:center;
-    padding:3px 6px; gap:8px;}
   .cr-dcbar .cr-band-hint{font-size:.44rem;}
-  .cr-dcbar .cr-pucks{position:static; transform:none;}
   .cr-box{min-height:104px;}
   .cr-bignum{font-size:1.8rem;}
 
