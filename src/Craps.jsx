@@ -135,6 +135,14 @@ export default function Craps() {
   const [fx, setFx] = useState(null); // center-screen roll overlay: {phase:"tumble"|"result", net, headline}
   const [drag, setDrag] = useState(null); // chip being dragged: {path, amt, x, y, over}
   const trayRef = useRef(null);
+
+  // ── autopilot (SIM): auto-place a strategy + auto-roll until stopped ──
+  const [simOpen, setSimOpen] = useState(false);
+  const [simRunning, setSimRunning] = useState(false);
+  const [simCfg, setSimCfg] = useState({ strat: "passmax", amt: 100 });
+  const [simStats, setSimStats] = useState(null); // {rolls, net}
+  const simRef = useRef({ running: false, startWealth: 0, rolls: 0, startRefill: 0 });
+  const refillAddRef = useRef(0); // cumulative bust refills (excluded from sim net)
   const [field12Triple, setField12Triple] = useState(false);
   const [tab, setTab] = useState("hard"); // "hard" | "hop"
   const [undoStack, setUndoStack] = useState([]);
@@ -297,6 +305,60 @@ export default function Craps() {
     }, 950);
   }
   useEffect(() => () => { clearTimeout(rollTimer.current); clearTimeout(fxTimer.current); }, []);
+
+  // ── sim engine ──────────────────────────────────────────────────────────────
+  const wealth = () => bankRef.current + sumBets(betsRef.current, luckyRef.current);
+
+  // Top a bet up to the target amount (goes through place() and all its rules).
+  function simPlaceBets() {
+    const amt = simCfg.amt;
+    const cur = (p) => getBet(betsRef.current, p);
+    const top = (p, t) => { const c = cur(p); if (t > c) place(p, { amount: t - c }); };
+    const s = simCfg.strat;
+    if (s === "passmax" || s === "pass68" || s === "buyacross") {
+      if (point == null) top("pass", amt);
+      else if (cur("pass") > 0) top("passOdds", cur("pass") * ODDS_CAP[point]);
+    }
+    if (s === "dpmax") {
+      if (point == null) top("dontPass", amt);
+      else if (cur("dontPass") > 0) top("dontPassOdds", cur("dontPass") * 6);
+    }
+    if ((s === "pass68" || s === "buyacross") && point != null) {
+      top(["place", 6], amt);
+      top(["place", 8], amt);
+    }
+    if (s === "buyacross" && point != null) {
+      for (const n of [4, 5, 9, 10]) top(["buy", n], amt);
+    }
+  }
+
+  function simStart() {
+    setSimOpen(false);
+    setAuto(false); // the sim drives the rolls itself
+    simRef.current = { running: true, startWealth: wealth(), rolls: 0, startRefill: refillAddRef.current };
+    setSimStats({ rolls: 0, net: 0 });
+    setSimRunning(true);
+  }
+  function simStop() {
+    simRef.current.running = false;
+    setSimRunning(false);
+    const net = wealth() - simRef.current.startWealth - (refillAddRef.current - simRef.current.startRefill);
+    setSimStats({ rolls: simRef.current.rolls, net });
+  }
+
+  // sim loop: when the dice settle and the sim is on, place bets and roll again
+  useEffect(() => {
+    if (!simRunning || rolling) return;
+    const t = setTimeout(() => {
+      if (!simRef.current.running) return;
+      simPlaceBets();
+      const net = wealth() - simRef.current.startWealth - (refillAddRef.current - simRef.current.startRefill);
+      setSimStats({ rolls: simRef.current.rolls, net });
+      simRef.current.rolls++;
+      roll();
+    }, 420);
+    return () => clearTimeout(t);
+  }, [simRunning, rolling]); // eslint-disable-line
 
   useEffect(() => {
     if (!auto || rolling) return;
@@ -522,6 +584,7 @@ export default function Craps() {
     const net = bankRef.current + sumBets(b, L) - beforeWealth;
     // busted (can't cover the smallest chip, nothing left working): auto-refill
     if (bankRef.current < CHIPS[0] && sumBets(b, L) === 0) {
+      refillAddRef.current += START_BANK - bankRef.current;
       commitBank(START_BANK);
       events.push("Busted — bankroll refilled to $1,000");
     }
@@ -880,6 +943,59 @@ export default function Craps() {
         {rolling ? "…" : auto && countdown > 0 ? `${countdown}s` : "ROLL"}
       </button>
 
+      {/* SIM autopilot: pick a strategy, it places bets + rolls until you stop */}
+      <button
+        className={cx("cr-simfab", simRunning && "running")}
+        onClick={() => (simRunning ? simStop() : setSimOpen(true))}
+      >
+        {simRunning ? "STOP" : "SIM"}
+      </button>
+      {simStats && (
+        <div className="cr-simstats">
+          <span>{simStats.rolls} rolls</span>
+          <b className={cx("mono", simStats.net >= 0 ? "pos" : "neg")}>
+            {simStats.net >= 0 ? "+" : "−"}{money(Math.abs(simStats.net))}
+          </b>
+        </div>
+      )}
+
+      {simOpen && (
+        <div className="cr-simpanel">
+          <div className="cr-simpanel-title">AUTOPILOT — pick a strategy</div>
+          {[
+            ["passmax", "Pass line + max odds", "the best bet in the house"],
+            ["pass68", "Pass + odds + place 6 & 8", "action on the big numbers"],
+            ["buyacross", "Pass + odds + buy 4-5-9-10 + place 6-8", "everything covered, done right"],
+            ["dpmax", "Don't pass + 6x lay odds", "the dark side"],
+          ].map(([k, lbl, sub]) => (
+            <button
+              key={k}
+              className={cx("cr-simstrat", simCfg.strat === k && "on")}
+              onClick={() => setSimCfg((c) => ({ ...c, strat: k }))}
+            >
+              <b>{lbl}</b>
+              <i>{sub}</i>
+            </button>
+          ))}
+          <div className="cr-simamts">
+            <span>base bet</span>
+            {[10, 25, 50, 100].map((a) => (
+              <button
+                key={a}
+                className={cx("cr-simamt", simCfg.amt === a && "on")}
+                onClick={() => setSimCfg((c) => ({ ...c, amt: a }))}
+              >
+                ${a}
+              </button>
+            ))}
+          </div>
+          <div className="cr-simgo">
+            <button className="cr-simcancel" onClick={() => setSimOpen(false)}>Cancel</button>
+            <button className="cr-simstart" onClick={simStart}>▶ START</button>
+          </div>
+        </div>
+      )}
+
       {/* bottom rack */}
       <footer className="cr-rack">
         <label className="cr-auto">
@@ -950,6 +1066,41 @@ const CSS = `
   box-shadow:0 6px 18px rgba(0,0,0,.55), inset 0 -4px 0 rgba(0,0,0,.25);}
 .cr-rollfab:disabled{opacity:.6;}
 .cr-rollfab:active{transform:translateY(2px);}
+
+/* SIM autopilot */
+.cr-simfab{position:fixed; right:26px; bottom:calc(108px + env(safe-area-inset-bottom)); z-index:70;
+  width:58px; height:58px; border-radius:50%; border:2.5px solid #7db8ff; color:#a8ceff;
+  background:radial-gradient(circle at 35% 30%, #1d3d63, #10233c); font-weight:900; font-size:.68rem;
+  letter-spacing:.08em; cursor:pointer; box-shadow:0 6px 16px rgba(0,0,0,.5);}
+.cr-simfab.running{border-color:var(--red); color:#ffd9d6;
+  background:radial-gradient(circle at 35% 30%, #6e211c, #3c100d); animation:cr-simpulse 1s infinite alternate;}
+@keyframes cr-simpulse{from{box-shadow:0 0 0 rgba(232,87,77,.5);} to{box-shadow:0 0 18px rgba(232,87,77,.7);}}
+.cr-simstats{position:fixed; right:96px; bottom:calc(118px + env(safe-area-inset-bottom)); z-index:70;
+  display:flex; flex-direction:column; align-items:flex-end; gap:1px; background:rgba(6,20,12,.88);
+  border:1px solid var(--line2); border-radius:10px; padding:6px 10px; pointer-events:none;}
+.cr-simstats span{font-size:.56rem; color:var(--dim); letter-spacing:.08em;}
+.cr-simstats b{font-size:.82rem; font-weight:800;}
+.cr-simstats b.pos{color:#7de89b;} .cr-simstats b.neg{color:var(--red);}
+.cr-simpanel{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(14px + env(safe-area-inset-bottom));
+  z-index:75; width:min(420px, calc(100vw - 24px)); background:#0c1f14; border:2px solid var(--yellow);
+  border-radius:16px; padding:14px; display:flex; flex-direction:column; gap:8px;
+  box-shadow:0 -8px 40px rgba(0,0,0,.6); animation:cr-fxin .18s ease;}
+.cr-simpanel-title{font-size:.62rem; letter-spacing:.2em; color:var(--yellow); font-weight:900; text-align:center; margin-bottom:2px;}
+.cr-simstrat{display:flex; flex-direction:column; gap:2px; text-align:left; padding:9px 12px;
+  border:1.5px solid var(--line2); border-radius:10px; background:rgba(255,255,255,.03); color:var(--ink); cursor:pointer;}
+.cr-simstrat.on{border-color:var(--yellow); background:rgba(247,215,116,.1);}
+.cr-simstrat b{font-size:.72rem; font-weight:800;}
+.cr-simstrat i{font-style:normal; font-size:.58rem; color:var(--dim);}
+.cr-simamts{display:flex; align-items:center; gap:7px; margin-top:2px;}
+.cr-simamts > span{font-size:.58rem; color:var(--dim); letter-spacing:.08em; margin-right:2px;}
+.cr-simamt{flex:1; padding:9px 2px; border:1.5px solid var(--line2); border-radius:9px; background:transparent;
+  color:var(--ink); font-weight:800; font-size:.72rem; cursor:pointer; font-family:var(--mono);}
+.cr-simamt.on{border-color:var(--yellow); background:rgba(247,215,116,.14); color:var(--yellow);}
+.cr-simgo{display:flex; gap:8px; margin-top:4px;}
+.cr-simcancel{flex:1; padding:11px; border:1.5px solid var(--line2); border-radius:10px; background:transparent;
+  color:var(--dim); font-weight:700; font-size:.72rem; cursor:pointer;}
+.cr-simstart{flex:2; padding:11px; border:2px solid var(--yellow); border-radius:10px;
+  background:linear-gradient(#8a6c1e,#5e4a12); color:#fff; font-weight:900; letter-spacing:.1em; font-size:.78rem; cursor:pointer;}
 
 /* ── top strip ── */
 .cr-top{display:flex; align-items:center; gap:12px; padding:8px 12px; flex-wrap:nowrap;
