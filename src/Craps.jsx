@@ -84,17 +84,19 @@ const sumBets = (b, lucky) =>
 
 // Mini chip stack — real stacked casino chips for a bet amount.
 const CHIP_COLOR = { 1: "#7a7a7a", 5: "#c0392b", 10: "#2471a3", 25: "#1e8449", 100: "#151515", 500: "#6c3483" };
-function MiniStack({ amt }) {
+function MiniStack({ amt, size = 26 }) {
   const den = [500, 100, 25, 10, 5, 1];
   const list = [];
   let rem = Math.round(amt);
   for (const d of den) while (rem >= d && list.length < 6) { list.push(d); rem -= d; }
   const shown = list.reverse();
-  const size = 18, off = 2.5;
+  const off = 3;
   return (
     <span className="cr-mstack" style={{ width: size, height: size + off * Math.max(0, shown.length - 1) }}>
       {shown.map((d, i) => (
-        <i key={i} style={{ background: CHIP_COLOR[d], width: size, height: size, bottom: i * off, zIndex: i }} />
+        <i key={i} style={{ background: CHIP_COLOR[d], width: size, height: size, bottom: i * off, zIndex: i }}>
+          {i === shown.length - 1 && <em>{amt % 1 === 0 ? `$${amt}` : `$${amt.toFixed(0)}`}</em>}
+        </i>
       ))}
     </span>
   );
@@ -131,6 +133,8 @@ export default function Craps() {
   const [auto, setAuto] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [fx, setFx] = useState(null); // center-screen roll overlay: {phase:"tumble"|"result", net, headline}
+  const [drag, setDrag] = useState(null); // chip being dragged: {path, amt, x, y, over}
+  const trayRef = useRef(null);
   const [field12Triple, setField12Triple] = useState(false);
   const [tab, setTab] = useState("hard"); // "hard" | "hop"
   const [undoStack, setUndoStack] = useState([]);
@@ -550,11 +554,47 @@ export default function Craps() {
   }
 
   // ── little chip on the felt ─────────────────────────────────────────────────
+  // Drag a felt chip to the top tray to take the bet down; a plain tap adds
+  // another selected chip to the same bet.
+  function chipPointerDown(e, path, amt, locked) {
+    if (rolling) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    let moved = false;
+    const overTray = (ev) => {
+      const r = trayRef.current?.getBoundingClientRect();
+      return !!r && ev.clientY < r.bottom + 26 && ev.clientY > r.top - 26 &&
+        ev.clientX > r.left - 26 && ev.clientX < r.right + 26;
+    };
+    const move = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 8) return;
+      if (locked) return; // contract bets can't come down — no drag
+      moved = true;
+      setDrag({ path, amt, x: ev.clientX, y: ev.clientY, over: overTray(ev) });
+    };
+    const up = (ev) => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      setDrag(null);
+      if (moved) {
+        if (overTray(ev)) removeBet(path);
+      } else if (!locked && path) {
+        place(path); // tap on the chip = add another
+      }
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  }
+
   const Chip = ({ amt, path, locked }) =>
     amt > 0 ? (
-      <span className="cr-fchip" onClick={(e) => e.stopPropagation()}>
+      <span
+        className={cx("cr-fchip", !locked && "draggable")}
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => chipPointerDown(e, path, amt, locked)}
+      >
         <MiniStack amt={amt} />
-        <b className="mono">{chipTxt(amt)}</b>
         {!locked && path && (
           <i className="cr-fx" onClick={(e) => { e.stopPropagation(); removeBet(path); }}>✕</i>
         )}
@@ -571,12 +611,13 @@ export default function Craps() {
       <header className="cr-top">
         <a className="cr-back" href="#">←</a>
         <span className="cr-title">BUBBLE CRAPS</span>
-        <span className="cr-topchips">
+        <span className={cx("cr-topchips", drag && "dragging", drag?.over && "dragover")} ref={trayRef}>
           {CHIPS.map((c) => (
             <button key={c} className={cx("cr-chip sm", `c${c}`, chip === c && "sel")} onClick={() => setChip(c)}>
               ${c}
             </button>
           ))}
+          {drag && <span className="cr-traytip">{drag.over ? "release to remove" : "drag here to remove"}</span>}
         </span>
         <span className="cr-meters">
           <span><b className="mono">{money(bank)}</b><i>credits</i></span>
@@ -800,6 +841,13 @@ export default function Craps() {
               {fx.net < -0.005 && <div className="cr-fx-net lose">−{money(-fx.net)}</div>}
             </>
           )}
+        </div>
+      )}
+
+      {/* chip being dragged */}
+      {drag && (
+        <div className="cr-dragghost" style={{ left: drag.x, top: drag.y }}>
+          <MiniStack amt={drag.amt} size={30} />
         </div>
       )}
 
@@ -1027,12 +1075,25 @@ const CSS = `
   border-radius:6px; padding:2px 6px; letter-spacing:.02em; display:inline-flex; gap:4px; align-items:center;}
 .cr-hintz{position:absolute; right:8px; bottom:3px; font-size:.5rem; letter-spacing:.04em; color:var(--dim); font-weight:600;}
 
-/* felt chips — mini stacks of real chips + amount */
-.cr-fchip{display:inline-flex; align-items:flex-end; gap:4px; cursor:default;}
-.cr-fchip b{font-size:.6rem; font-weight:800; color:var(--yellow); text-shadow:0 1px 2px rgba(0,0,0,.6);}
+/* felt chips — stacked chips with the amount printed on the top chip */
+.cr-fchip{display:inline-flex; align-items:flex-end; gap:3px; cursor:default; touch-action:none;}
+.cr-fchip.draggable{cursor:grab;}
 .cr-mstack{position:relative; display:inline-block; flex-shrink:0;}
 .cr-mstack i{position:absolute; left:0; border-radius:50%; border:1.5px dashed rgba(255,255,255,.65);
-  box-shadow:0 1px 2px rgba(0,0,0,.5); box-sizing:border-box;}
+  box-shadow:0 1px 2px rgba(0,0,0,.5); box-sizing:border-box; display:flex; align-items:center; justify-content:center;}
+.cr-mstack i em{font-style:normal; color:#fff; font-size:.46rem; font-weight:900; letter-spacing:-.02em;
+  text-shadow:0 1px 1px rgba(0,0,0,.7); font-family:var(--mono);}
+
+/* dragging a chip to the tray */
+.cr-dragghost{position:fixed; z-index:95; pointer-events:none; transform:translate(-50%,-60%) scale(1.15);
+  filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));}
+.cr-topchips{position:relative;}
+.cr-topchips.dragging{outline:2px dashed rgba(247,215,116,.5); outline-offset:5px; border-radius:12px;}
+.cr-topchips.dragover{outline-color:var(--red); background:rgba(232,87,77,.12);}
+.cr-traytip{position:absolute; top:100%; left:50%; transform:translateX(-50%); margin-top:8px;
+  font-size:.56rem; color:var(--yellow); white-space:nowrap; font-weight:700; letter-spacing:.06em;
+  background:rgba(0,0,0,.72); padding:3px 8px; border-radius:6px;}
+.cr-topchips.dragover .cr-traytip{color:#ffb3ae;}
 .cr-fx{font-style:normal; cursor:pointer; color:#cfe3cf; font-size:.6rem; background:rgba(0,0,0,.4);
   border-radius:50%; width:15px; height:15px; display:inline-flex; align-items:center; justify-content:center;}
 .cr-fx:hover{color:var(--red);}
