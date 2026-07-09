@@ -257,6 +257,7 @@ export default function Baccarat() {
       running: true, busy: false, hands: 0,
       startBank: bankRef.current, startRefill: refillAddRef.current,
       prog: simCfg.unit, streak: 0, // progression state (martingale / paroli)
+      curRun: 0, maxRun: 0, // consecutive resolved losses (ties don't break it)
     };
     setSimStats({ hands: 0, net: 0 });
     setSimRunning(true);
@@ -271,7 +272,7 @@ export default function Baccarat() {
     if (g.phase === "dealing") return;
     const progression = simCfg.strat === "martingale" || simCfg.strat === "paroli";
     const net = bankRef.current - simRef.current.startBank - (refillAddRef.current - simRef.current.startRefill);
-    setSimStats({ hands: simRef.current.hands, net, next: progression ? simRef.current.prog : null });
+    setSimStats({ hands: simRef.current.hands, net, next: progression ? simRef.current.prog : null, maxRun: simRef.current.maxRun });
     simRef.current.hands++;
 
     const k = simCfg.strat === "streak" ? lastWinner() || "banker" : progression ? "banker" : simCfg.strat;
@@ -283,6 +284,15 @@ export default function Baccarat() {
     g.bets = { ...emptyBets(), [k]: wager };
     rr();
     await deal();
+
+    // worst losing run tracker (resolved hands only — ties don't break a run)
+    {
+      const last = g.road[g.road.length - 1];
+      if (last) {
+        if (last.w === "P") { simRef.current.curRun++; if (simRef.current.curRun > simRef.current.maxRun) simRef.current.maxRun = simRef.current.curRun; }
+        else if (last.w === "B") simRef.current.curRun = 0;
+      }
+    }
 
     // progression bookkeeping off the result (ties push — bet repeats unchanged)
     if (progression) {
@@ -441,7 +451,7 @@ export default function Baccarat() {
       </button>
       {simStats && (
         <div className="bc-simstats">
-          <span>{simStats.hands} hands{simStats.next ? ` · next bet ${money(simStats.next)}` : ""}</span>
+          <span>{simStats.hands} hands{simStats.next ? ` · next ${money(simStats.next)}` : ""}{simStats.maxRun >= 4 ? ` · worst run ${simStats.maxRun}L` : ""}</span>
           <b className={cx("mono", simStats.net >= 0 ? "pos" : "neg")}>
             {simStats.net >= 0 ? "+" : "−"}{money(Math.abs(simStats.net))}
           </b>
