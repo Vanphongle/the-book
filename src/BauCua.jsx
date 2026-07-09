@@ -75,6 +75,8 @@ export default function BauCua() {
   useEffect(() => () => { aliveRef.current = false; }, []);
   const rr = () => { if (aliveRef.current) setTick((t) => t + 1); };
   const [chip, setChip] = useState(10);
+  const [drag, setDrag] = useState(null); // {amt, from: 'rack'|sym, x, y, over}
+  const suppressClickRef = useRef(0);
   const g = G.current;
 
   // ── SIM ──
@@ -88,13 +90,63 @@ export default function BauCua() {
   const betting = g.phase === "bet" || g.phase === "done";
   const onBoard = sumBets(g.bets);
 
-  function addBet(k) {
+  function addBet(k, amt = chip) {
     if (!betting) return;
-    if (bankRef.current < chip) { g.msg = "Not enough credits."; rr(); return; }
+    if (bankRef.current < amt) { g.msg = "Not enough credits."; rr(); return; }
     if (g.phase === "done") { g.phase = "bet"; g.msg = ""; }
-    payBank(-chip);
-    g.bets = { ...g.bets, [k]: g.bets[k] + chip };
+    payBank(-amt);
+    g.bets = { ...g.bets, [k]: g.bets[k] + amt };
+    if (navigator.vibrate) navigator.vibrate(8);
     rr();
+  }
+
+  // drag a chip from the rack (from="rack") or a placed stack (from=symbol key)
+  function startDrag(e, amt, from) {
+    if (!betting || g.phase === "shake" || simRunning) return;
+    if (from === "rack" && bankRef.current < amt) return;
+    const el = e.currentTarget;
+    el.setPointerCapture?.(e.pointerId);
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false;
+    const tileAt = (ev) => {
+      const t = document.elementFromPoint(ev.clientX, ev.clientY);
+      const tile = t && t.closest ? t.closest("[data-sym]") : null;
+      return tile ? tile.dataset.sym : null;
+    };
+    const onMove = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 7) return;
+      moved = true;
+      setDrag({ amt, from, x: ev.clientX, y: ev.clientY, over: tileAt(ev) });
+    };
+    const cleanup = () => {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onCancel);
+      setDrag(null);
+    };
+    const onUp = (ev) => {
+      if (moved) {
+        suppressClickRef.current = Date.now() + 400;
+        const sym = tileAt(ev);
+        if (from === "rack") {
+          if (sym) addBet(sym, amt);
+        } else if (sym && sym !== from) {
+          g.bets = { ...g.bets, [from]: 0, [sym]: g.bets[sym] + amt }; // slide the stack over
+          if (navigator.vibrate) navigator.vibrate(8);
+          rr();
+        } else if (!sym) {
+          payBank(amt); // dragged off the mat — chips come home
+          g.bets = { ...g.bets, [from]: 0 };
+          g.msg = `${money(amt)} back in your pocket.`;
+          rr();
+        }
+      }
+      cleanup();
+    };
+    const onCancel = cleanup;
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onCancel);
   }
   function clearBet(k) {
     if (!betting || !g.bets[k]) return;
@@ -125,14 +177,17 @@ export default function BauCua() {
     const staked = sumBets(b);
     let credit = 0;
     const hits = [];
+    g.lastWins = {};
     for (const s of SYMBOLS) {
       if (!b[s.k]) continue;
       const k = dice.filter((d) => d === s.k).length;
       if (k > 0) {
         credit += b[s.k] * (1 + k); // stake back + 1:1 per matching die
+        g.lastWins[s.k] = b[s.k] * k;
         hits.push(`${s.icon}×${k}`);
       }
     }
+    if (credit - staked > 0 && navigator.vibrate && !simRef.current.running) navigator.vibrate([40, 60, 40]);
     if (credit > 0) payBank(credit);
     g.winNet = credit - staked;
     g.winKey = Math.random();
@@ -222,7 +277,9 @@ export default function BauCua() {
   }, [simRunning, tick]); // eslint-disable-line
 
   return (
-    <div className="bu">
+    <div className="bu" onClickCapture={(e) => {
+      if (Date.now() < suppressClickRef.current) { e.stopPropagation(); e.preventDefault(); }
+    }}>
       <style>{CSS}</style>
       <header className="bu-top">
         <a className="bu-back" href="#">←</a>
@@ -273,29 +330,48 @@ export default function BauCua() {
 
       {/* betting board: 2 rows × 3, like the classic mat */}
       <div className="bu-board">
-        {SYMBOLS.map((s) => (
-          <button key={s.k} className={cx("bu-tile", g.bets[s.k] > 0 && "has")} onClick={() => addBet(s.k)}>
-            <span className="bu-tile-icon">{s.icon}</span>
-            <b>{s.vn}</b>
-            {g.bets[s.k] > 0 && (
-              <span className="bu-tile-chips">
-                <ChipStack amt={g.bets[s.k]} />
-                {betting && <u className="bu-x" onClick={(e) => { e.stopPropagation(); clearBet(s.k); }}>✕</u>}
-              </span>
-            )}
-          </button>
-        ))}
+        {SYMBOLS.map((s) => {
+          const nDice = g.phase === "done" ? g.dice.filter((d) => d === s.k).length : 0;
+          return (
+            <button key={s.k} data-sym={s.k}
+              className={cx("bu-tile", g.bets[s.k] > 0 && "has", drag && drag.over === s.k && "drop", nDice > 0 && "hit")}
+              onClick={() => addBet(s.k)}>
+              <span className="bu-tile-icon">{s.icon}</span>
+              <b>{s.vn}</b>
+              {nDice > 0 && <span className="bu-tile-pips">{"●".repeat(nDice)}</span>}
+              {g.phase === "done" && g.lastWins?.[s.k] > 0 && (
+                <span className="bu-tile-won mono">+{money(g.lastWins[s.k])}</span>
+              )}
+              {g.bets[s.k] > 0 && (
+                <span className="bu-tile-chips" onPointerDown={(e) => { e.stopPropagation(); startDrag(e, g.bets[s.k], s.k); }}>
+                  <ChipStack amt={g.bets[s.k]} />
+                  {betting && <u className="bu-x" onClick={(e) => { e.stopPropagation(); clearBet(s.k); }}>✕</u>}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* chips */}
       <footer className="bu-rack">
         {CHIPS.map((c) => (
-          <button key={c} className={cx("bu-chip", `c${c}`, chip === c && "sel")} onClick={() => setChip(c)}>
+          <button key={c} className={cx("bu-chip", `c${c}`, chip === c && "sel")}
+            onClick={() => setChip(c)} onPointerDown={(e) => startDrag(e, c, "rack")}>
             ${c}
           </button>
         ))}
+        <span className="bu-rack-hint">tap = select · drag = place</span>
         <span className="bu-onboard">on mat <b className="mono">{money(onBoard)}</b></span>
       </footer>
+
+      {/* dragged chip ghost */}
+      {drag && (
+        <div className="bu-ghost" style={{
+          left: drag.x, top: drag.y,
+          background: CHIP_COLOR[[100, 25, 10, 5].find((d) => d <= drag.amt) || 5],
+        }}>${drag.amt}</div>
+      )}
 
       {/* floating SHAKE */}
       {betting && !simRunning && (onBoard > 0 || (g.lastBets && sumBets(g.lastBets) > 0)) && (
@@ -421,7 +497,18 @@ const CSS = `
   cursor:pointer; min-height:104px; color:var(--ink);}
 .bu-tile-icon{font-size:2.2rem; line-height:1.1;}
 .bu-tile b{font-size:.78rem; font-weight:900; letter-spacing:.06em;}
+.bu-tile{transition:transform .12s, box-shadow .15s, border-color .15s;}
+.bu-tile:active{transform:scale(.96);}
 .bu-tile.has{background:rgba(242,193,78,.16); box-shadow:0 0 14px rgba(242,193,78,.3); border-color:var(--gold);}
+.bu-tile.drop{transform:scale(1.06); border-color:#fff; background:rgba(242,193,78,.28);
+  box-shadow:0 0 22px rgba(242,193,78,.65);}
+.bu-tile.hit{border-color:#7de89b; background:rgba(70,190,110,.14); box-shadow:0 0 18px rgba(70,190,110,.4);
+  animation:bu-hitpulse .55s ease 2;}
+@keyframes bu-hitpulse{50%{box-shadow:0 0 26px rgba(70,190,110,.75);}}
+.bu-tile-pips{position:absolute; top:6px; left:8px; font-size:.5rem; color:#7de89b; letter-spacing:2px;}
+.bu-tile-won{position:absolute; top:4px; right:6px; font-size:.62rem; font-weight:900; color:#7de89b;
+  text-shadow:0 1px 3px rgba(0,0,0,.6); animation:bu-wonpop .4s cubic-bezier(.2,1.6,.4,1);}
+@keyframes bu-wonpop{from{transform:scale(.3); opacity:0;}}
 .bu-tile-chips{display:flex; align-items:flex-end; gap:5px; margin-top:2px;}
 .bu-x{text-decoration:none; font-style:normal; cursor:pointer; color:#ffd9d6; font-size:.6rem;
   background:rgba(0,0,0,.5); border-radius:50%; width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center;}
@@ -436,7 +523,14 @@ const CSS = `
 .bu-chip{width:42px; height:42px; border-radius:50%; font-weight:800; cursor:pointer; color:#fff;
   border:3px dashed rgba(255,255,255,.6); font-size:.66rem;}
 .bu-chip.c5{background:#c0392b;} .bu-chip.c10{background:#2471a3;} .bu-chip.c25{background:#1e8449;} .bu-chip.c100{background:#111;}
+.bu-chip{touch-action:none;}
 .bu-chip.sel{outline:3px solid var(--gold); outline-offset:2px;}
+.bu-tile-chips{touch-action:none; cursor:grab;}
+.bu-rack-hint{width:100%; text-align:center; font-size:.52rem; color:#b58a7a; letter-spacing:.08em; margin-top:-2px;}
+.bu-ghost{position:fixed; z-index:120; pointer-events:none; transform:translate(-50%,-50%) scale(1.25);
+  width:44px; height:44px; border-radius:50%; border:3px dashed rgba(255,255,255,.7); color:#fff;
+  font-weight:900; font-size:.68rem; font-family:var(--mono); display:flex; align-items:center; justify-content:center;
+  box-shadow:0 10px 24px rgba(0,0,0,.55);}
 .bu-onboard{font-size:.62rem; color:var(--dim);}
 .bu-onboard b{color:var(--gold);}
 
