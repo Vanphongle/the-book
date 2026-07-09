@@ -677,7 +677,7 @@ export default function Blackjack() {
           {g.hands.map((h, i) => {
             const v = handValue(h.cards);
             return (
-              <div key={i} className={cx("bj-hand", g.phase === "player" && i === g.active && !h.done && "live", h.result)}>
+              <div key={i} className={cx("bj-hand", g.phase === "player" && i === g.active && !h.done && "live", h.result && `r-${h.result}`)}>
                 <div className="bj-cards">
                   {h.cards.map((c, j) => (
                     <Card key={c.id || j} c={c} fresh={g.freshIds.has(c.id)} />
@@ -688,7 +688,7 @@ export default function Blackjack() {
                     {v.total}{v.soft && v.total <= 21 ? " soft" : ""}
                   </span>
                   <span className="bj-handbet"><ChipStack amt={h.bet} small /><u className="mono">{money(h.bet)}</u></span>
-                  {h.result && <span className={cx("bj-res", h.result)}>{RES_TXT[h.result]}</span>}
+                  {h.result && <span className={cx("bj-res", `r-${h.result}`)}>{RES_TXT[h.result]}</span>}
                 </div>
               </div>
             );
@@ -941,18 +941,18 @@ const CSS = `
 .bj-hands{display:flex; gap:26px; flex-wrap:wrap; align-items:flex-end; justify-content:center;}
 .bj-hand{padding:8px 10px 9px; border-radius:12px; border:2px solid transparent;}
 .bj-hand.live{border-color:var(--yellow); background:rgba(247,215,116,.07);}
-.bj-hand.win,.bj-hand.bj{border-color:var(--green); animation:bj-glow 1.1s ease-out;}
+.bj-hand.r-win,.bj-hand.r-bj{border-color:var(--green); animation:bj-glow 1.1s ease-out;}
 @keyframes bj-glow{0%{box-shadow:0 0 0 rgba(99,214,139,0);} 30%{box-shadow:0 0 26px rgba(99,214,139,.8);} 100%{box-shadow:0 0 8px rgba(99,214,139,.25);}}
-.bj-hand.lose{opacity:.75;}
+.bj-hand.r-lose{opacity:.75;}
 .bj-hand-foot{display:flex; align-items:center; gap:8px; margin-top:8px;}
 .bj-total{font-family:var(--mono); font-weight:800; font-size:.8rem; background:rgba(0,0,0,.3); border-radius:6px; padding:2px 7px;}
 .bj-total.bust{color:var(--red);}
 .bj-betchip{font-family:var(--mono); font-size:.68rem; font-weight:800; color:#241c05;
   background:radial-gradient(circle at 40% 35%, #ffe9a8, #d4a940); border:2px dashed #8a6c1e; border-radius:12px; padding:2px 8px;}
 .bj-res{font-size:.6rem; font-weight:900; letter-spacing:.08em; padding:3px 7px; border-radius:6px;}
-.bj-res.win,.bj-res.bj{background:var(--green); color:#06230f;}
-.bj-res.lose{background:var(--red); color:#fff;}
-.bj-res.push,.bj-res.surr{background:#8fa3b8; color:#101820;}
+.bj-res.r-win,.bj-res.r-bj{background:var(--green); color:#06230f;}
+.bj-res.r-lose{background:var(--red); color:#fff;}
+.bj-res.r-push,.bj-res.r-surr{background:#8fa3b8; color:#101820;}
 
 /* betting spots — fixed heights so placing chips never shifts the layout */
 .bj-sides{display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap; padding:6px 0 12px;}
