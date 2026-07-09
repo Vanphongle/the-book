@@ -418,6 +418,17 @@ export default function Roulette() {
           <StraightCell n={"0"} />
           {!euro && <StraightCell n={"00"} />}
         </div>
+        {/* the headline bets — big, right under the zeros */}
+        <div className="rl-rb">
+          <OutsideCell k="red" label="RED" sub="1:1" cls="redcell big" />
+          <OutsideCell k="black" label="BLACK" sub="1:1" cls="blackcell big" />
+        </div>
+        <div className="rl-evens">
+          <OutsideCell k="low" label="1-18" />
+          <OutsideCell k="even" label="EVEN" />
+          <OutsideCell k="odd" label="ODD" />
+          <OutsideCell k="high" label="19-36" />
+        </div>
         <div className="rl-grid">
           {rows.map((row, i) => row.map((n) => <StraightCell key={n} n={n} />))}
         </div>
@@ -430,14 +441,6 @@ export default function Roulette() {
           <OutsideCell k="d1" label="1st 12" sub="2:1" />
           <OutsideCell k="d2" label="2nd 12" sub="2:1" />
           <OutsideCell k="d3" label="3rd 12" sub="2:1" />
-        </div>
-        <div className="rl-evens">
-          <OutsideCell k="low" label="1-18" />
-          <OutsideCell k="even" label="EVEN" />
-          <OutsideCell k="red" label="RED" cls="redcell" />
-          <OutsideCell k="black" label="BLACK" cls="blackcell" />
-          <OutsideCell k="odd" label="ODD" />
-          <OutsideCell k="high" label="19-36" />
         </div>
       </div>
 
@@ -569,8 +572,11 @@ const CSS = `
   display:flex; align-items:center; justify-content:center; gap:6px;}
 .rl-num.red{background:#a2251e;} .rl-num.black{background:#161616;} .rl-num.green{background:#0d7a3e; min-height:44px;}
 .rl-num.has{box-shadow:0 0 0 2px var(--gold), 0 0 12px rgba(216,180,118,.35);}
+.rl-rb{display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:5px;}
+.rl-out.big{min-height:56px;}
+.rl-out.big b{font-size:1rem; letter-spacing:.14em;}
 .rl-cols,.rl-dozens{display:grid; grid-template-columns:repeat(3,1fr); gap:5px; margin-top:5px;}
-.rl-evens{display:grid; grid-template-columns:repeat(3,1fr); gap:5px; margin-top:5px;}
+.rl-evens{display:grid; grid-template-columns:repeat(4,1fr); gap:5px; margin:5px 0;}
 .rl-out{position:relative; min-height:44px; border-radius:8px; border:1.5px solid rgba(216,180,118,.5);
   background:rgba(0,0,0,.22); color:var(--ink); cursor:pointer; display:flex; flex-direction:column;
   align-items:center; justify-content:center; gap:1px;}
