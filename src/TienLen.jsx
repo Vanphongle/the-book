@@ -496,6 +496,10 @@ export default function TienLen() {
                   ${c}
                 </button>
               ))}
+              <button className={cx("tl-chip call", !CHIPS.includes(g.bet) && "sel")}
+                onClick={() => { g.bet = Math.max(5, Math.floor(bankRef.current / 3)); rr(); }}>
+                ALL
+              </button>
             </span>
             <button className="tl-btn deal" onClick={deal}>DEAL · win +{money(g.bet * 3)}</button>
           </>
@@ -622,6 +626,7 @@ const CSS = `
 .tl-btn.play.ok{border-color:var(--gold); background:linear-gradient(#8a6c1e,#5e4a12); color:#fff;}
 .tl-btn.deal{border-color:var(--gold); background:linear-gradient(#8a6c1e,#5e4a12); color:#fff; padding:13px 26px;}
 .tl-stake{display:flex; align-items:center; gap:6px; font-size:.62rem; color:var(--dim);}
+.tl-chip.call{background:linear-gradient(140deg,#d4a940,#7a5c10); font-size:.5rem; letter-spacing:.04em;}
 .tl-chip{width:40px; height:40px; border-radius:50%; border:2.5px dashed rgba(255,255,255,.55);
   background:#22335a; color:#fff; font-weight:800; font-size:.64rem; cursor:pointer;}
 .tl-chip.sel{outline:3px solid var(--gold); outline-offset:2px; background:#31497e;}

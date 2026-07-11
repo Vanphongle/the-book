@@ -92,7 +92,8 @@ export default function BauCua() {
 
   function addBet(k, amt = chip) {
     if (!betting) return;
-    if (bankRef.current < amt) { g.msg = "Not enough credits."; rr(); return; }
+    if (amt === "all") amt = Math.floor(bankRef.current);
+    if (amt < 1 || bankRef.current < amt) { g.msg = "Not enough credits."; rr(); return; }
     if (g.phase === "done") { g.phase = "bet"; g.msg = ""; }
     payBank(-amt);
     g.bets = { ...g.bets, [k]: g.bets[k] + amt };
@@ -103,7 +104,8 @@ export default function BauCua() {
   // drag a chip from the rack (from="rack") or a placed stack (from=symbol key)
   function startDrag(e, amt, from) {
     if (!betting || g.phase === "shake" || simRunning) return;
-    if (from === "rack" && bankRef.current < amt) return;
+    if (amt === "all") amt = Math.floor(bankRef.current);
+    if (from === "rack" && (amt < 1 || bankRef.current < amt)) return;
     const el = e.currentTarget;
     el.setPointerCapture?.(e.pointerId);
     const sx = e.clientX, sy = e.clientY;
@@ -361,6 +363,8 @@ export default function BauCua() {
             ${c}
           </button>
         ))}
+        <button className={cx("bu-chip call", chip === "all" && "sel")}
+          onClick={() => setChip("all")} onPointerDown={(e) => startDrag(e, "all", "rack")}>ALL</button>
         <span className="bu-rack-hint">tap = select · drag = place</span>
         <span className="bu-onboard">on mat <b className="mono">{money(onBoard)}</b></span>
       </footer>
@@ -524,6 +528,7 @@ const CSS = `
   border:3px dashed rgba(255,255,255,.6); font-size:.66rem;}
 .bu-chip.c5{background:#c0392b;} .bu-chip.c10{background:#2471a3;} .bu-chip.c25{background:#1e8449;} .bu-chip.c100{background:#111;}
 .bu-chip{touch-action:none;}
+.bu-chip.call{background:linear-gradient(140deg,#d4a940,#7a5c10); font-size:.54rem; letter-spacing:.04em;}
 .bu-chip.sel{outline:3px solid var(--gold); outline-offset:2px;}
 .bu-tile-chips{touch-action:none; cursor:grab;}
 .bu-rack-hint{width:100%; text-align:center; font-size:.52rem; color:#b58a7a; letter-spacing:.08em; margin-top:-2px;}

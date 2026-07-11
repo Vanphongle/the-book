@@ -168,14 +168,15 @@ export default function Roulette() {
 
   function addBet(path) {
     if (!betting) return;
-    if (bankRef.current < chip) { g.msg = "Not enough credits."; rr(); return; }
+    const amt = chip === "all" ? Math.floor(bankRef.current) : chip;
+    if (amt < 1 || bankRef.current < amt) { g.msg = "Not enough credits."; rr(); return; }
     if (g.phase === "done") { g.phase = "bet"; g.msg = ""; }
-    payBank(-chip);
+    payBank(-amt);
     if (Array.isArray(path)) {
       const n = path[1];
-      g.bets = { ...g.bets, straight: { ...g.bets.straight, [n]: (g.bets.straight[n] || 0) + chip } };
+      g.bets = { ...g.bets, straight: { ...g.bets.straight, [n]: (g.bets.straight[n] || 0) + amt } };
     } else {
-      g.bets = { ...g.bets, [path]: g.bets[path] + chip };
+      g.bets = { ...g.bets, [path]: g.bets[path] + amt };
     }
     rr();
   }
@@ -480,6 +481,7 @@ export default function Roulette() {
             ${c}
           </button>
         ))}
+        <button className={cx("rl-chip call", chip === "all" && "sel")} onClick={() => setChip("all")}>ALL</button>
         <span className="rl-onboard">on felt <b className="mono">{money(onBoard)}</b></span>
       </footer>
 
@@ -648,6 +650,7 @@ const CSS = `
   border:3px dashed rgba(255,255,255,.6); font-size:.64rem;}
 .rl-chip.c1{background:#7a7a7a;} .rl-chip.c5{background:#c0392b;} .rl-chip.c10{background:#2471a3;}
 .rl-chip.c25{background:#1e8449;} .rl-chip.c100{background:#111;}
+.rl-chip.call{background:linear-gradient(140deg,#d4a940,#7a5c10); font-size:.52rem; letter-spacing:.04em;}
 .rl-chip.sel{outline:3px solid var(--gold); outline-offset:2px;}
 .rl-onboard{font-size:.6rem; color:var(--dim);}
 .rl-onboard b{color:var(--gold);}

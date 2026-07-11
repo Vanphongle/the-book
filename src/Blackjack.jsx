@@ -258,6 +258,8 @@ export default function Blackjack() {
   const [bet, setBet] = useState(0);
   const [chip, setChip] = useState(25);
   const [sides, setSides] = useState({ match: 0, pairs: 0, plus3: 0 });
+  const onTable = bet + sides.match + sides.pairs + sides.plus3;
+  const chipAmt = chip === "all" ? Math.max(0, Math.floor(bankRef.current - onTable)) : chip;
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
 
@@ -737,7 +739,7 @@ export default function Blackjack() {
               <button
                 key={k}
                 className={cx("bj-mainspot", bet > 0 && "has")}
-                onClick={() => betting && bankRef.current >= bet + sides.match + sides.pairs + sides.plus3 + chip && setBet(bet + chip)}
+                onClick={() => betting && chipAmt > 0 && bankRef.current >= onTable + chipAmt && setBet(bet + chipAmt)}
               >
                 <span className="bj-spot-ring">
                   {bet > 0 ? <ChipStack amt={bet} /> : <em>BET</em>}
@@ -754,7 +756,7 @@ export default function Blackjack() {
             <button
               key={k}
               className={cx("bj-side", sides[k] > 0 && "has", settled && (r ? "won" : "lost"))}
-              onClick={() => betting && setSides((s) => ({ ...s, [k]: s[k] + chip }))}
+              onClick={() => betting && chipAmt > 0 && bankRef.current >= onTable + chipAmt && setSides((s) => ({ ...s, [k]: s[k] + chipAmt }))}
             >
               <span className="bj-side-info">
                 <b>{lbl}</b>
@@ -882,6 +884,7 @@ export default function Blackjack() {
               ${c}
             </button>
           ))}
+          <button className={cx("bj-chip call", chip === "all" && "sel")} onClick={() => setChip("all")}>ALL</button>
           <span className="bj-settings">
             <label>
               decks
@@ -1078,6 +1081,7 @@ const CSS = `
   border:3px dashed rgba(255,255,255,.6); font-size:.72rem;}
 .bj-chip.c5{background:#c0392b;} .bj-chip.c10{background:#2471a3;} .bj-chip.c25{background:#1e8449;}
 .bj-chip.c100{background:#111;} .bj-chip.c500{background:#6c3483;}
+.bj-chip.call{background:linear-gradient(140deg,#d4a940,#7a5c10); font-size:.56rem; letter-spacing:.04em;}
 .bj-chip.sel{outline:3px solid var(--yellow); outline-offset:2px;}
 .bj-settings{width:100%; display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:center; margin-top:8px;}
 .bj-settings label{display:flex; gap:5px; align-items:center; font-size:.64rem; color:#9dbfa4; cursor:pointer;}

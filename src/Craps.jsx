@@ -171,7 +171,8 @@ export default function Craps() {
   function place(path, opts = {}) {
     if (rolling) return;
     const B = betsRef.current;
-    const amt = opts.amount ?? chip;
+    let amt = opts.amount ?? chip;
+    if (amt === "all") amt = Math.floor(bankRef.current);
     if (amt <= 0 || bankRef.current < amt) return say("Not enough credits.");
     if (path === "pass" && point) return say("Pass line only before the come-out.");
     if (path === "dontPass" && point) return say("Don't Pass only before the come-out.");
@@ -709,6 +710,9 @@ export default function Craps() {
               ${c}
             </button>
           ))}
+          <button className={cx("cr-chip sm call", chip === "all" && "sel")} onClick={() => setChip("all")}>
+            ALL
+          </button>
           {drag && <span className="cr-traytip">{drag.over ? "release to remove ✓" : "drag to the top to remove"}</span>}
         </span>
         <span className="cr-meters">
@@ -1292,6 +1296,7 @@ const CSS = `
   border:3px dashed rgba(255,255,255,.6); font-size:.76rem; flex-shrink:0;}
 .cr-chip.c1{background:#7a7a7a;} .cr-chip.c5{background:#c0392b;} .cr-chip.c10{background:#2471a3;}
 .cr-chip.c25{background:#1e8449;} .cr-chip.c100{background:#111;}
+.cr-chip.call{background:linear-gradient(140deg,#d4a940,#7a5c10); font-size:.5rem; letter-spacing:.04em;}
 .cr-chip.sel{outline:3px solid var(--yellow); outline-offset:2px;}
 .cr-actions{display:flex; gap:6px;}
 .cr-actions button{background:#122a1b; border:1.5px solid #2c4a35; color:var(--dim); border-radius:8px;

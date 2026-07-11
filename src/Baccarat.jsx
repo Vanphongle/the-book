@@ -112,10 +112,11 @@ export default function Baccarat() {
 
   function placeBet(k) {
     if (!betting) return;
-    if (bankRef.current < chip) { g.msg = "Not enough credits."; rr(); return; }
+    const amt = chip === "all" ? Math.floor(bankRef.current) : chip;
+    if (amt < 1 || bankRef.current < amt) { g.msg = "Not enough credits."; rr(); return; }
     if (g.phase === "done") { g.p = []; g.b = []; g.phase = "bet"; g.msg = ""; }
-    payBank(-chip);
-    g.bets = { ...g.bets, [k]: g.bets[k] + chip };
+    payBank(-amt);
+    g.bets = { ...g.bets, [k]: g.bets[k] + amt };
     rr();
   }
   function clearBet(k) {
@@ -435,6 +436,7 @@ export default function Baccarat() {
             ${c}
           </button>
         ))}
+        <button className={cx("bc-chip call", chip === "all" && "sel")} onClick={() => setChip("all")}>ALL</button>
         <span className="bc-onboard">on felt <b className="mono">{money(onBoard)}</b></span>
       </footer>
 
@@ -588,6 +590,7 @@ const CSS = `
   border:3px dashed rgba(255,255,255,.6); font-size:.7rem;}
 .bc-chip.c5{background:#c0392b;} .bc-chip.c10{background:#2471a3;} .bc-chip.c25{background:#1e8449;}
 .bc-chip.c100{background:#111;} .bc-chip.c500{background:#6c3483;}
+.bc-chip.call{background:linear-gradient(140deg,#d4a940,#7a5c10); font-size:.56rem; letter-spacing:.04em;}
 .bc-chip.sel{outline:3px solid var(--gold); outline-offset:2px;}
 .bc-onboard{font-size:.62rem; color:var(--dim); margin-left:8px;}
 .bc-onboard b{color:var(--gold);}
