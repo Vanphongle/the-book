@@ -174,12 +174,15 @@ const LEVELS = {
   shark: { key: "shark", icon: "🦈", label: "Shark", tag: "thinking player",
     iters: 180, noise: 0.02, usePotOdds: true, margin: -0.01, raiseAt: 0.58, betAt: 0.50, bluff: 0.14,
     size: 0.75, pfRaise: 8, pfCall: 6, semibluff: true },
+  pro: { key: "pro", icon: "👑", label: "Pro", tag: "exploitative — reads & attacks you",
+    iters: 340, noise: 0.0, usePotOdds: true, margin: -0.03, raiseAt: 0.54, betAt: 0.47, bluff: 0.20,
+    size: 0.82, pfRaise: 7.5, pfCall: 5.5, semibluff: true, exploit: true },
 };
 
 // decide a bot action. returns { action:'fold'|'check'|'call'|'raise', to } (to = raise-to total this street)
-function botDecision(G, i, fast) {
+function botDecision(G, i, fast, levelKey) {
   const p = G.players[i];
-  const T = LEVELS[G.level];
+  const T = LEVELS[levelKey || G.level];
   const toCall = G.currentBet - p.committedThisStreet;
   const canCheck = toCall <= 0;
   const pot = G.pot;
@@ -205,30 +208,40 @@ function botDecision(G, i, fast) {
     return { action: "fold" };
   }
 
-  // ---- postflop: Monte-Carlo equity ----
-  let e = equity(p.hole, G.board, activeOpp, fast ? Math.min(70, T.iters) : T.iters);
+  // ---- postflop: Monte-Carlo equity (+ exploitative reads for Pro) ----
+  let e = equity(p.hole, G.board, activeOpp, fast ? Math.min(80, T.iters) : T.iters);
   e = clamp(e + (rnd() - 0.5) * T.noise, 0, 1);
-  const betSize = () => {
-    const raw = roundTo(pot * (T.size * (0.85 + rnd() * 0.4)), 10);
-    return clamp(raw, BB, p.stack) ;
-  };
-  const raiseTarget = () => {
-    const raw = roundTo(G.currentBet + Math.max(G.minRaise, pot * T.size), 10);
-    return clamp(raw, G.currentBet + G.minRaise, p.committedThisStreet + p.stack);
-  };
-  const bluffRoll = rnd() < T.bluff;
-  // draw detection for semibluff (shark): decent equity but not made
+
+  // Pro reads each live opponent's fold-to-bet rate and tunes to it:
+  //   table overfolds → bluff more · sticky callers → bluff less, value bigger
+  let foldRead = 0.34;
+  if (T.exploit && G.read) {
+    const os = G.players.filter((q) => !q.folded && q !== p)
+      .map((q) => { const r = G.read[q.seat]; return r && r.faced > 0 ? r.folded / r.faced : 0.34; });
+    if (os.length) foldRead = os.reduce((a, b) => a + b, 0) / os.length;
+  }
+  const foldFactor = clamp(foldRead / 0.34, 0, 2.4);
+  const stationy = T.exploit && foldRead < 0.26;
+  const bluffChance = T.bluff * (T.exploit ? foldFactor : 1);
+  const raiseAt = clamp(T.raiseAt - (stationy ? 0.05 : 0), 0.4, 0.95);
+  const betAt = clamp(T.betAt - (stationy ? 0.06 : 0), 0.35, 0.9);
+  const vsize = T.size * (stationy ? 1.2 : 1);
+
+  const betSize = () => clamp(roundTo(pot * (vsize * (0.85 + rnd() * 0.4)), 10), BB, p.stack);
+  const raiseTarget = () => clamp(roundTo(G.currentBet + Math.max(G.minRaise, pot * vsize), 10),
+    G.currentBet + G.minRaise, p.committedThisStreet + p.stack);
+  const bluffRoll = rnd() < bluffChance;
   const drawy = T.semibluff && e > 0.34 && e < 0.52;
 
   if (canCheck) {
-    if (e >= T.raiseAt || (e >= T.betAt && rnd() < 0.8) || bluffRoll || (drawy && rnd() < 0.5)) {
+    if (e >= raiseAt || (e >= betAt && rnd() < 0.82) || bluffRoll || (drawy && rnd() < 0.5)) {
       const to = Math.min(p.committedThisStreet + betSize(), p.committedThisStreet + p.stack);
       return { action: "raise", to };
     }
     return { action: "check" };
   }
   // facing a bet
-  if (e >= T.raiseAt) return { action: "raise", to: raiseTarget() };
+  if (e >= raiseAt) return { action: "raise", to: raiseTarget() };
   const need = T.usePotOdds ? potOdds + (T.margin || 0) : T.callFloor;
   if (e >= need && toCall <= p.stack) {
     if (drawy && rnd() < 0.35) return { action: "raise", to: raiseTarget() }; // semibluff raise
@@ -273,6 +286,8 @@ export default function Poker() {
       level, button: Math.floor(rnd() * SEATS), deck: [], board: [], pot: 0,
       street: "idle", currentBet: 0, minRaise: BB, actor: -1, phase: "idle",
       handNo: 0, msg: "Tap DEAL to start.", results: null, winFx: 0, revealAll: false,
+      // session-long fold-to-bet reads per seat (primed so early hands aren't degenerate)
+      read: Array.from({ length: SEATS }, () => ({ faced: 2, folded: 0.7 })),
     };
   }
   const g = G.current;
@@ -287,6 +302,9 @@ export default function Poker() {
 
   const [sim, setSim] = useState(false);
   const simRef = useRef(false);
+  const [simLevel, setSimLevel] = useState("pro");
+  const simLevelRef = useRef("pro");
+  useEffect(() => { simLevelRef.current = simLevel; }, [simLevel]);
   const [betAmt, setBetAmt] = useState(BB * 2);
 
   const syncBank = () => { const v = Math.round(g.players[0].stack); setBank(v); localStorage.setItem(LS_BANK, String(v)); };
@@ -355,6 +373,10 @@ export default function Poker() {
 
   function applyAction(i, action, to) {
     const p = g.players[i];
+    // update this seat's fold-to-bet read (they were facing a live bet)
+    if (g.currentBet - p.committedThisStreet > 0 && g.read) {
+      g.read[i].faced++; if (action === "fold") g.read[i].folded++;
+    }
     if (action === "fold") { p.folded = true; p.hasActed = true; p.lastAction = "Fold"; }
     else if (action === "check") { p.hasActed = true; p.lastAction = "Check"; }
     else if (action === "call") {
@@ -465,7 +487,8 @@ export default function Poker() {
       if (!aliveRef.current || g.phase !== "betting" || g.actor < 0) return;
       const cur = g.players[g.actor];
       if (!cur || (cur.isHuman && !simRef.current)) return;
-      const dec = botDecision(g, g.actor, simRef.current);
+      const lvl = (g.actor === 0 && simRef.current) ? simLevelRef.current : g.level;
+      const dec = botDecision(g, g.actor, simRef.current, lvl);
       applyAction(g.actor, dec.action, dec.to);
       rr();
       await sleep(simRef.current ? 60 : 260);
@@ -633,11 +656,24 @@ export default function Poker() {
             )}
           </div>
         ) : (
-          <div className="pk-waiting">{simRef.current ? "sim running…" : "waiting…"}</div>
+          <div className="pk-waiting">
+            {simRef.current ? `sim: ${LEVELS[simLevel].icon} you vs ${LEVELS[level].icon} table` : "waiting…"}
+          </div>
         )}
       </footer>
 
       {/* SIM */}
+      {!sim && (
+        <div className="pk-simpick">
+          <span>SIM plays as</span>
+          <div>
+            {Object.values(LEVELS).map((L) => (
+              <button key={L.key} className={cx(simLevel === L.key && "on")}
+                onClick={() => setSimLevel(L.key)} title={`${L.label} — ${L.tag}`}>{L.icon}</button>
+            ))}
+          </div>
+        </div>
+      )}
       <button className={cx("pk-simfab", sim && "on")} onClick={toggleSim}>{sim ? "STOP" : "SIM"}</button>
       <button className="pk-newtable" onClick={newTable}>⟳ table</button>
     </div>
@@ -656,7 +692,7 @@ const CSS = `
 .pk-title{font-size:.74rem;letter-spacing:.24em;color:var(--gold);font-weight:800;}
 .pk-levels{display:flex;gap:4px;margin-left:auto;}
 .pk-lvl{display:flex;flex-direction:column;align-items:center;gap:0;background:rgba(255,255,255,.05);border:1.5px solid transparent;
-  border-radius:9px;padding:3px 7px;cursor:pointer;color:var(--dim);line-height:1.1;}
+  border-radius:8px;padding:2px 5px;cursor:pointer;color:var(--dim);line-height:1.05;}
 .pk-lvl u{text-decoration:none;font-size:.5rem;letter-spacing:.05em;}
 .pk-lvl.on{border-color:var(--gold);color:var(--ink);background:rgba(242,193,78,.14);}
 .pk-meters{display:flex;flex-direction:column;align-items:flex-end;}
@@ -733,6 +769,13 @@ const CSS = `
 .pk-quick button:active{border-color:var(--gold);color:var(--gold);}
 .pk-waiting{text-align:center;color:var(--dim);font-size:.7rem;padding:16px;}
 
+.pk-simpick{position:fixed;left:12px;bottom:calc(148px + env(safe-area-inset-bottom));z-index:40;
+  background:rgba(6,20,14,.92);border:1px solid #4b6b57;border-radius:12px;padding:6px 7px;display:flex;
+  flex-direction:column;gap:4px;align-items:center;}
+.pk-simpick>span{font-size:.48rem;color:var(--dim);letter-spacing:.06em;}
+.pk-simpick>div{display:flex;gap:3px;}
+.pk-simpick button{width:27px;height:27px;border-radius:7px;border:1.5px solid transparent;background:rgba(255,255,255,.05);cursor:pointer;font-size:.82rem;}
+.pk-simpick button.on{border-color:var(--gold);background:rgba(242,193,78,.18);}
 .pk-simfab{position:fixed;left:14px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:40;width:54px;height:54px;
   border-radius:50%;border:2.5px solid #7db8ff;color:#a8ceff;background:radial-gradient(circle at 35% 30%,#1d3d63,#10233c);
   font-weight:900;font-size:.66rem;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.5);}
