@@ -27,6 +27,14 @@ const TIER_META = {
 };
 const REF_BET = 50;
 
+// Adjustable RTP. We scale the base-game payouts by payMult so total RTP
+// (base × payMult + the ~2.2% the shared jackpots return) lands on the target.
+// BASE_RTP = each machine's measured fixed-pay return (Monte-Carlo verified).
+const RTP_OPTIONS = [0.92, 0.94, 0.96, 0.98];
+const BASE_RTP = { lucky7: 0.907, dragon: 0.897, gems: 0.899 };
+const JACK_RTP = 0.022; // approx return from the mini/minor/grand pots
+const payMultFor = (id, rtp) => Math.max(0.5, (rtp - JACK_RTP) / BASE_RTP[id]);
+
 // ── machine definitions ───────────────────────────────────────────────────────
 const VARIATIONS = {
   lucky7: {
@@ -133,6 +141,14 @@ export default function Slot() {
   const [varId, setVarId] = useState(() => (VARIATIONS[localStorage.getItem(LS_VAR)] ? localStorage.getItem(LS_VAR) : "lucky7"));
   useEffect(() => localStorage.setItem(LS_VAR, varId), [varId]);
   const v = VARIATIONS[varId];
+
+  const [rtp, setRtp] = useState(() => {
+    const val = parseFloat(localStorage.getItem("the-book.slot.rtp.v1"));
+    return RTP_OPTIONS.includes(val) ? val : 0.92;
+  });
+  useEffect(() => localStorage.setItem("the-book.slot.rtp.v1", String(rtp)), [rtp]);
+  const rtpRef = useRef(rtp);
+  useEffect(() => { rtpRef.current = rtp; }, [rtp]);
 
   const [bet, setBet] = useState(50);
   const [grid, setGrid] = useState(() => spinGrid(VARIATIONS[varId]));
@@ -243,7 +259,7 @@ export default function Slot() {
     } else {
       // base line/ways win
       if (res.mult > 0) {
-        const winAmt = Math.max(1, Math.round(res.mult * bet));
+        const winAmt = Math.max(1, Math.round(res.mult * payMultFor(V.id, rtpRef.current) * bet));
         pay(winAmt);
         setResult({ win: winAmt, kind: res.kind, winCells: res.winCells });
         setMsg(`${res.kind} — you won ${money(winAmt)}!`);
@@ -276,6 +292,7 @@ export default function Slot() {
     pay(START_BANK - bankRef.current); setMsg("Fresh $10,000.");
   }
 
+  const pm = payMultFor(v.id, rtp);
   const win = result && result.win > 0;
   const winCells = (result && result.winCells) || new Set();
   const cell = v.reels <= 3 ? 74 : v.reels === 5 ? 58 : 48;
@@ -359,17 +376,27 @@ export default function Slot() {
         </div>
       </footer>
 
-      {/* paytable */}
+      {/* paytable + RTP setting */}
       <details className="sl-paytable">
-        <summary>{v.name} paytable · 91% RTP · {v.mechanic === "ways" ? `${Math.pow(v.rows, v.reels).toLocaleString()} ways` : "center line"}</summary>
+        <summary>{v.name} paytable · {Math.round(rtp * 100)}% RTP · {v.mechanic === "ways" ? `${Math.pow(v.rows, v.reels).toLocaleString()} ways` : "center line"}</summary>
+        <div className="sl-rtprow">
+          <span>Payout / RTP</span>
+          <div className="sl-rtpbtns">
+            {RTP_OPTIONS.map((o) => (
+              <button key={o} className={cx("sl-rtpbtn", rtp === o && "on")} onClick={() => setRtp(o)}>
+                {Math.round(o * 100)}%<i>{(100 - Math.round(o * 100))}% edge</i>
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="sl-pt-grid">
           <div className="sl-pt jack"><span>{v.emoji[v.jackpotSym].repeat(3)}</span><b>JACKPOT</b></div>
           {v.mechanic === "classic"
-            ? [...["seven", "star", "bell", "melon", "lemon", "cherry"].map((k) => [v.emoji[k].repeat(3), `${v.pay3[k]}×`]), ["🍒🍒", "2×"], ["🍒", "1×"]]
+            ? [...["seven", "star", "bell", "melon", "lemon", "cherry"].map((k) => [v.emoji[k].repeat(3), `${Math.round(v.pay3[k] * pm)}×`]), ["🍒🍒", `${Math.round(2 * pm)}×`], ["🍒", `${Math.max(1, Math.round(1 * pm))}×`]]
                 .map(([a, b], i) => <div key={i} className="sl-pt"><span>{a}</span><b>{b}</b></div>)
             : v.paySymbols.map((k) => (
                 <div key={k} className="sl-pt"><span>{v.emoji[k]}</span>
-                  <b>{Object.entries(v.pays[k]).map(([n, x]) => `${n}:${x}`).join("  ")}</b></div>
+                  <b>{Object.entries(v.pays[k]).map(([n, x]) => `${n}:${Math.round(x * pm)}`).join("  ")}</b></div>
               ))}
         </div>
         <p className="sl-pt-note">
@@ -491,6 +518,14 @@ const CSS = `
 .sl-pt.jack{grid-column:1 / -1;background:rgba(255,255,255,.08);border-radius:8px;padding:4px 8px;}
 .sl-pt.jack b{color:var(--hot);}
 .sl-pt-note{font-size:.55rem;color:var(--dim);line-height:1.5;margin:2px 0 8px;}
+.sl-rtprow{display:flex;flex-direction:column;gap:5px;padding:6px 0 8px;border-bottom:1px solid rgba(255,255,255,.08);}
+.sl-rtprow>span{font-size:.56rem;color:var(--dim);letter-spacing:.06em;}
+.sl-rtpbtns{display:flex;gap:6px;}
+.sl-rtpbtn{flex:1;display:flex;flex-direction:column;align-items:center;gap:0;padding:6px 2px;border-radius:9px;cursor:pointer;
+  border:1.5px solid #5a4880;background:rgba(255,255,255,.04);color:var(--ink);font-weight:800;font-size:.72rem;font-family:var(--mono);line-height:1.1;}
+.sl-rtpbtn i{font-style:normal;font-size:.46rem;font-family:var(--sans);color:var(--dim);font-weight:600;}
+.sl-rtpbtn.on{border-color:var(--accent);background:rgba(255,255,255,.12);color:var(--accent);}
+.sl-rtpbtn.on i{color:var(--accent);opacity:.85;}
 
 .sl-jackfx{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;overflow:hidden;
   background:rgba(10,4,20,.7);pointer-events:none;animation:sl-fade .5s ease 5.4s forwards;}
