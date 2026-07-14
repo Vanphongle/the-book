@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { readJackpot, bumpJackpot, winJackpot, subscribeJackpot } from "./slotJackpot";
+import { readJackpots, bumpJackpot, winJackpot, subscribeJackpots, TIERS } from "./slotJackpot";
 
 // ─── SLOTS — three machines, one shared jackpot ───────────────────────────────
 // Play money (localStorage) for your bankroll; the progressive jackpot is the
@@ -15,7 +15,17 @@ const LS_NAME = "the-book.slot.name.v1";
 const LS_VAR = "the-book.slot.variation.v1";
 const START_BANK = 10000;
 const BETS = [25, 50, 100, 250, 500];
-const JACKPOT_FEED = 0.01;
+
+// tiered shared jackpots. Grand is won by the machine's symbol condition (rare);
+// Mini & Minor are "mystery" — a small random chance every spin, scaled by bet
+// so betting more gives proportionally more chances (fair). Each tier gets a
+// slice of every bet. Reference bet 50.
+const TIER_META = {
+  mini:  { label: "MINI",  feed: 0.004, mystery: 1 / 500,  color: "#7de89b" },
+  minor: { label: "MINOR", feed: 0.003, mystery: 1 / 5000, color: "#6fd0ff" },
+  grand: { label: "GRAND", feed: 0.003, mystery: 0,        color: "#ffcf3f" }, // symbol-triggered
+};
+const REF_BET = 50;
 
 // ── machine definitions ───────────────────────────────────────────────────────
 const VARIATIONS = {
@@ -133,12 +143,12 @@ export default function Slot() {
   const [flash, setFlash] = useState(0);
   const [jackWin, setJackWin] = useState(null);
 
-  const [jackpot, setJackpot] = useState(0);
+  const [jackpots, setJackpots] = useState({ mini: 100, minor: 1000, grand: 10000 });
   const [jackServer, setJackServer] = useState(false);
   const [jackToast, setJackToast] = useState("");
-  const jackRef = useRef(0);
-  const setJack = (val) => { jackRef.current = val; setJackpot(val); };
-  const prevJackRef = useRef(0);
+  const jackRef = useRef({ mini: 100, minor: 1000, grand: 10000 });
+  const prevJackRef = useRef({ mini: 100, minor: 1000, grand: 10000 });
+  const setTier = (id, val) => { jackRef.current = { ...jackRef.current, [id]: val }; setJackpots({ ...jackRef.current }); };
 
   const [auto, setAuto] = useState(false);
   const autoRef = useRef(false);
@@ -151,13 +161,18 @@ export default function Slot() {
   useEffect(() => {
     let unsub = () => {};
     (async () => {
-      const { amount, server } = await readJackpot();
+      const { amounts, server } = await readJackpots();
       if (!aliveRef.current) return;
-      setJack(amount); prevJackRef.current = amount; setJackServer(server);
-      unsub = subscribeJackpot((amt) => {
+      jackRef.current = { ...amounts }; prevJackRef.current = { ...amounts };
+      setJackpots({ ...amounts }); setJackServer(server);
+      unsub = subscribeJackpots((tier, amt) => {
         if (!aliveRef.current) return;
-        if (amt < prevJackRef.current - 1) { setJackToast("💥 Jackpot just won! Reseeding…"); later(() => aliveRef.current && setJackToast(""), 5000); }
-        prevJackRef.current = amt; setJack(amt);
+        if (amt < prevJackRef.current[tier] - 1) { // this tier dropped → someone won it
+          setJackToast(`💥 ${TIER_META[tier].label} jackpot just won! Reseeding…`);
+          later(() => aliveRef.current && setJackToast(""), 5000);
+        }
+        prevJackRef.current = { ...prevJackRef.current, [tier]: amt };
+        setTier(tier, amt);
       });
     })();
     return () => unsub();
@@ -182,8 +197,13 @@ export default function Slot() {
     busyRef.current = true;
     setResult(null);
     pay(-bet);
-    const contrib = bet * JACKPOT_FEED;
-    setJack(jackRef.current + contrib); prevJackRef.current = jackRef.current; bumpJackpot(contrib);
+    // feed every tier (optimistic local tick; realtime corrects)
+    for (const tier of TIERS) {
+      const c = bet * TIER_META[tier].feed;
+      prevJackRef.current[tier] = jackRef.current[tier];
+      setTier(tier, jackRef.current[tier] + c);
+      bumpJackpot(tier, c);
+    }
 
     const finalGrid = spinGrid(V);
     spinningRef.current = Array(V.reels).fill(true);
@@ -208,23 +228,37 @@ export default function Slot() {
     if (!aliveRef.current) return;
 
     const res = evaluate(finalGrid, V);
-    if (res.jackpot) {
-      const won = await winJackpot(name);
+    const hitTier = async (tier, cells) => {
+      const won = await winJackpot(tier, name);
       pay(won);
-      setResult({ win: won, jackpot: true, winCells: res.winCells });
-      setJackWin({ amount: won });
-      setMsg(`${V.emoji[V.jackpotSym].repeat(3)} JACKPOT! You won ${money(won)}!`);
+      prevJackRef.current[tier] = jackRef.current[tier];
+      setResult({ win: won, jackpot: true, tier, winCells: cells || new Set() });
+      setJackWin({ amount: won, tier });
+      setMsg(`${TIER_META[tier].label} JACKPOT! You won ${money(won)}! 🎉`);
       setFlash((f) => f + 1);
       later(() => aliveRef.current && setJackWin(null), 6000);
-    } else if (res.mult > 0) {
-      const winAmt = Math.max(1, Math.round(res.mult * bet));
-      pay(winAmt);
-      setResult({ win: winAmt, kind: res.kind, winCells: res.winCells });
-      setMsg(`${res.kind} — you won ${money(winAmt)}!`);
-      setFlash((f) => f + 1);
+    };
+    if (res.jackpot) {
+      await hitTier("grand", res.winCells);          // machine's symbol condition = the big one
     } else {
-      setResult({ win: 0, winCells: new Set() });
-      setMsg("No win — spin again 🎰");
+      // base line/ways win
+      if (res.mult > 0) {
+        const winAmt = Math.max(1, Math.round(res.mult * bet));
+        pay(winAmt);
+        setResult({ win: winAmt, kind: res.kind, winCells: res.winCells });
+        setMsg(`${res.kind} — you won ${money(winAmt)}!`);
+        setFlash((f) => f + 1);
+      } else {
+        setResult({ win: 0, winCells: new Set() });
+        setMsg("No win — spin again 🎰");
+      }
+      // mystery jackpots: Mini / Minor, chance scales with bet (can land on top of a base win)
+      const scale = bet / REF_BET;
+      const roll = Math.random();
+      const pMini = TIER_META.mini.mystery * scale;
+      const pMinor = TIER_META.minor.mystery * scale;
+      if (roll < pMinor) { await sleep(res.mult > 0 ? 900 : 200); if (aliveRef.current) await hitTier("minor"); }
+      else if (roll < pMinor + pMini) { await sleep(res.mult > 0 ? 900 : 200); if (aliveRef.current) await hitTier("mini"); }
     }
     if (bankRef.current < BETS[0]) { pay(START_BANK - bankRef.current); setMsg((m) => m + " · Busted — refilled to $10,000."); }
     busyRef.current = false;
@@ -268,10 +302,17 @@ export default function Slot() {
         ))}
       </div>
 
-      {/* shared jackpot */}
-      <div className="sl-jackpot">
-        <span className="sl-jack-label">💰 SHARED JACKPOT {jackServer ? <em className="sl-live">● live</em> : <em className="sl-local">local</em>}</span>
-        <span className="sl-jack-amt mono">{money(jackpot)}</span>
+      {/* shared tiered jackpots */}
+      <div className="sl-jackwrap">
+        <div className="sl-jackhead">💰 SHARED JACKPOTS {jackServer ? <em className="sl-live">● live</em> : <em className="sl-local">local</em>}</div>
+        <div className="sl-jacktiers">
+          {TIERS.map((tier) => (
+            <div key={tier} className={cx("sl-jacktier", tier)} style={{ "--tc": TIER_META[tier].color }}>
+              <span className="sl-jt-label">{TIER_META[tier].label}</span>
+              <span className="sl-jt-amt mono">{money(jackpots[tier])}</span>
+            </div>
+          ))}
+        </div>
         {jackToast && <span className="sl-jack-toast">{jackToast}</span>}
       </div>
 
@@ -335,14 +376,14 @@ export default function Slot() {
           {v.mechanic === "ways"
             ? `Match from the left on adjacent reels — any row. W is WILD (any symbol). More matching reels & rows = more ways = bigger pay. `
             : "Pays on the center line. "}
-          Jackpot: {v.jackpotHow}. 1% of every bet across all machines feeds the shared jackpot.
+          GRAND jackpot: {v.jackpotHow}. MINI & MINOR drop at random any spin (better odds the more you bet). Every bet on any machine feeds all three shared pots.
         </p>
       </details>
 
       {jackWin && (
         <div className="sl-jackfx">
-          <div className="sl-jackfx-card">
-            <span className="sl-jackfx-1">💎 JACKPOT 💎</span>
+          <div className="sl-jackfx-card" style={{ "--tc": TIER_META[jackWin.tier].color }}>
+            <span className="sl-jackfx-1">💎 {TIER_META[jackWin.tier].label} JACKPOT 💎</span>
             <span className="sl-jackfx-amt mono">{money(jackWin.amount)}</span>
             <span className="sl-jackfx-2">paid to your credits!</span>
           </div>
@@ -378,16 +419,20 @@ const CSS = `
 .sl-tab.on{border-color:var(--accent);background:rgba(255,255,255,.1);color:var(--ink);box-shadow:0 0 12px rgba(0,0,0,.3);}
 .sl-tab:disabled{opacity:.6;}
 
-.sl-jackpot{margin:8px 14px 4px;padding:9px;border-radius:14px;text-align:center;position:relative;
-  background:linear-gradient(135deg,rgba(255,255,255,.14),rgba(0,0,0,.25));border:2px solid var(--accent);
-  box-shadow:0 0 20px rgba(0,0,0,.4),inset 0 0 16px rgba(0,0,0,.3);}
-.sl-jack-label{display:block;font-size:.54rem;letter-spacing:.14em;color:var(--ink);font-weight:800;opacity:.9;}
+.sl-jackwrap{margin:8px 14px 4px;position:relative;}
+.sl-jackhead{text-align:center;font-size:.54rem;letter-spacing:.14em;color:var(--ink);font-weight:800;opacity:.9;margin-bottom:5px;}
 .sl-live{font-style:normal;color:#7dff9b;font-size:.5rem;margin-left:4px;}
 .sl-local{font-style:normal;color:var(--dim);font-size:.5rem;margin-left:4px;}
-.sl-jack-amt{display:block;font-size:1.8rem;font-weight:900;color:var(--accent);text-shadow:0 0 16px rgba(255,255,255,.3);
-  animation:sl-jackglow 2.4s infinite;}
-@keyframes sl-jackglow{50%{text-shadow:0 0 26px var(--accent);}}
-.sl-jack-toast{position:absolute;left:0;right:0;bottom:-20px;font-size:.58rem;color:var(--hot);font-weight:800;}
+.sl-jacktiers{display:flex;gap:6px;}
+.sl-jacktier{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;padding:7px 4px;border-radius:12px;
+  background:linear-gradient(135deg,rgba(255,255,255,.1),rgba(0,0,0,.28));border:1.5px solid var(--tc);
+  box-shadow:inset 0 0 12px rgba(0,0,0,.3);}
+.sl-jacktier.grand{flex:1.5;border-width:2px;box-shadow:0 0 16px color-mix(in srgb,var(--tc) 45%,transparent),inset 0 0 12px rgba(0,0,0,.3);}
+.sl-jt-label{font-size:.5rem;letter-spacing:.16em;font-weight:800;color:var(--tc);}
+.sl-jt-amt{font-size:.86rem;font-weight:900;color:#fff;text-shadow:0 0 8px rgba(255,255,255,.25);}
+.sl-jacktier.grand .sl-jt-amt{font-size:1.15rem;color:var(--tc);animation:sl-jackglow 2.4s infinite;}
+@keyframes sl-jackglow{50%{text-shadow:0 0 22px var(--tc);}}
+.sl-jack-toast{position:absolute;left:0;right:0;bottom:-19px;text-align:center;font-size:.58rem;color:var(--hot);font-weight:800;}
 
 .sl-machine{position:relative;margin:12px 10px;display:flex;justify-content:center;}
 .sl-window{display:flex;padding:12px;border-radius:16px;position:relative;justify-content:center;
@@ -450,10 +495,10 @@ const CSS = `
 .sl-jackfx{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;overflow:hidden;
   background:rgba(10,4,20,.7);pointer-events:none;animation:sl-fade .5s ease 5.4s forwards;}
 .sl-jackfx-card{display:flex;flex-direction:column;align-items:center;gap:4px;padding:22px 40px;border-radius:20px;
-  background:linear-gradient(135deg,var(--a1),var(--a2));border:3px solid var(--accent);box-shadow:0 0 50px var(--accent);
+  background:linear-gradient(135deg,var(--a1),var(--a2));border:3px solid var(--tc);box-shadow:0 0 50px var(--tc);
   animation:sl-pop .6s cubic-bezier(.2,1.6,.4,1);z-index:2;}
-.sl-jackfx-1{font-size:1rem;letter-spacing:.2em;color:var(--accent);font-weight:900;}
-.sl-jackfx-amt{font-size:2.5rem;font-weight:900;color:#fff;text-shadow:0 0 24px var(--accent);}
+.sl-jackfx-1{font-size:1rem;letter-spacing:.16em;color:var(--tc);font-weight:900;}
+.sl-jackfx-amt{font-size:2.5rem;font-weight:900;color:#fff;text-shadow:0 0 24px var(--tc);}
 .sl-jackfx-2{font-size:.66rem;color:var(--ink);}
 .sl-coin{position:absolute;top:-8%;font-size:1.6rem;animation:sl-drop 2.2s linear infinite;}
 @keyframes sl-drop{to{transform:translateY(120vh) rotate(540deg);}}

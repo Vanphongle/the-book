@@ -136,3 +136,34 @@ create policy "anon full access"
   to anon
   using (true)
   with check (true);
+
+-- ─── SLOT — tiered jackpots (mini / minor / grand) ────────────────────────────
+-- Three shared pots instead of one. Mini drops often & small; Grand is the rare
+-- big one (the machine's symbol condition). Same table, keyed by id.
+insert into public.slot_jackpot (id, amount, seed) values
+  ('mini',  100,   100),
+  ('minor', 1000,  1000),
+  ('grand', 10000, 10000)
+  on conflict (id) do nothing;
+
+-- id-parameterized overloads (the old single-arg versions remain for safety)
+create or replace function public.slot_bump(p_id text, p_delta numeric)
+returns numeric language sql as $$
+  update public.slot_jackpot set amount = amount + p_delta, updated_at = now()
+    where id = p_id returning amount;
+$$;
+
+create or replace function public.slot_win(p_id text, p_winner text)
+returns numeric language plpgsql as $$
+declare won numeric;
+begin
+  select amount into won from public.slot_jackpot where id = p_id for update;
+  update public.slot_jackpot
+    set amount = seed, last_winner = p_winner, last_won_at = now(), updated_at = now()
+    where id = p_id;
+  return won;
+end;
+$$;
+
+grant execute on function public.slot_bump(text, numeric) to anon;
+grant execute on function public.slot_win(text, text) to anon;
