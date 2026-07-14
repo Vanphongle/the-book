@@ -911,6 +911,7 @@ export default function App() {
                   <a href="#/tienlen" onClick={() => setGamesOpen(false)}>🀄 Tiến Lên</a>
                   <a href="#/baucua" onClick={() => setGamesOpen(false)}>🦀 Bầu Cua</a>
                   <a href="#/poker" onClick={() => setGamesOpen(false)}>♠️ Hold'em Poker</a>
+                  <a href="#/slot" onClick={() => setGamesOpen(false)}>🎰 Lucky 7s Slot</a>
                 </div>
               </>
             )}
