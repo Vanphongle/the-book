@@ -164,19 +164,22 @@ function buildPots(players) {
 }
 
 // ── AI table levels ────────────────────────────────────────────────────────────
+// betEdge/raiseEdge = how far *ahead of a fair share of the field* (equity − 1/players)
+// a hand must be to value-bet / value-raise. This is the key to sane multiway play:
+// one pair is a monster heads-up but garbage 6-ways, and these edges encode that.
 const LEVELS = {
   fish: { key: "fish", icon: "🐟", label: "Fish", tag: "loose-passive",
-    iters: 60, noise: 0.10, usePotOdds: false, callFloor: 0.24, raiseAt: 0.80, betAt: 0.60, bluff: 0.0,
-    size: 0.5, pfRaise: 12, pfCall: 3.5 },
+    iters: 60, noise: 0.10, usePotOdds: false, callFloor: 0.22, betEdge: 0.20, raiseEdge: 0.34, bluff: 0.0,
+    size: 0.5, pfRaise: 12, pfCall: 4 },
   reg: { key: "reg", icon: "🎯", label: "Reg", tag: "tight-aggressive",
-    iters: 120, noise: 0.05, usePotOdds: true, margin: 0.03, raiseAt: 0.66, betAt: 0.55, bluff: 0.06,
-    size: 0.66, pfRaise: 8.5, pfCall: 6.5 },
+    iters: 120, noise: 0.05, usePotOdds: true, margin: 0.03, betEdge: 0.13, raiseEdge: 0.21, bluff: 0.06,
+    size: 0.66, pfRaise: 9, pfCall: 7.5 },
   shark: { key: "shark", icon: "🦈", label: "Shark", tag: "thinking player",
-    iters: 180, noise: 0.02, usePotOdds: true, margin: -0.01, raiseAt: 0.58, betAt: 0.50, bluff: 0.14,
-    size: 0.75, pfRaise: 8, pfCall: 6, semibluff: true },
+    iters: 180, noise: 0.02, usePotOdds: true, margin: -0.01, betEdge: 0.11, raiseEdge: 0.18, bluff: 0.12,
+    size: 0.72, pfRaise: 8.5, pfCall: 7, semibluff: true },
   pro: { key: "pro", icon: "👑", label: "Pro", tag: "exploitative — reads & attacks you",
-    iters: 340, noise: 0.0, usePotOdds: true, margin: -0.03, raiseAt: 0.54, betAt: 0.47, bluff: 0.20,
-    size: 0.82, pfRaise: 7.5, pfCall: 5.5, semibluff: true, exploit: true },
+    iters: 340, noise: 0.0, usePotOdds: true, margin: -0.02, betEdge: 0.09, raiseEdge: 0.16, bluff: 0.18,
+    size: 0.78, pfRaise: 8, pfCall: 6.5, semibluff: true, exploit: true },
 };
 
 // decide a bot action. returns { action:'fold'|'check'|'call'|'raise', to } (to = raise-to total this street)
@@ -192,62 +195,76 @@ function botDecision(G, i, fast, levelKey) {
   const seatsFromBtn = (i - G.button + SEATS) % SEATS; // 0=button-ish ordering
   const late = seatsFromBtn >= SEATS - 2;
 
-  // ---- preflop: score-gated ----
+  // ---- preflop: score-gated, with 3-bet/shove discipline ----
   if (preflop) {
-    const s = preflopScore(p.hole) + (late ? 1 : 0) + (rnd() - 0.5) * 1.2;
-    const openTo = roundTo(BB * (2.5 + rnd()), 10) + p.committedThisStreet * 0; // ~3bb open
-    if (s >= T.pfRaise) {
-      const target = G.currentBet <= BB ? Math.max(G.currentBet + G.minRaise, roundTo(BB * 3, 10))
-        : roundTo(G.currentBet * 2.6, 10);
+    const s = preflopScore(p.hole) + (late ? 1 : 0) + (rnd() - 0.5) * 1.0;
+    const raised = G.currentBet > BB;          // someone already opened above the blind
+    const bigAction = G.currentBet > BB * 4;   // 3-bet+ territory
+    // fewer opponents → play much wider (heads-up / blind battles demand it;
+    // full-ring stays tight). This is the single biggest short-handed correction.
+    const widen = activeOpp <= 1 ? 3.5 : activeOpp === 2 ? 2 : activeOpp <= 3 ? 0.9 : 0;
+    const raiseGate = T.pfRaise - widen + (raised ? 3.5 : 0) + (bigAction ? 3 : 0);
+    if (s >= raiseGate) {
+      const target = !raised ? Math.max(G.currentBet + G.minRaise, roundTo(BB * 3, 10))
+        : roundTo(G.currentBet * 2.5, 10);
       return { action: "raise", to: Math.min(target, p.committedThisStreet + p.stack) };
     }
-    if (canCheck) return { action: "check" };
-    if (s >= T.pfCall && toCall <= p.stack) return { action: "call" };
-    // fish still peels cheap flops
-    if (!T.usePotOdds && toCall <= BB * 1.5 && s >= 2.5) return { action: "call" };
+    if (canCheck) return { action: "check" };  // BB with a free option
+    const callGate = T.pfCall - widen + (raised ? 2.5 : 0) + (bigAction ? 3 : 0);
+    const allInPre = toCall >= p.stack * 0.8;
+    // never stack off preflop without a premium
+    if (s >= callGate && (!allInPre || s >= T.pfRaise + 4) && toCall <= p.stack) return { action: "call" };
+    if (!T.usePotOdds && !raised && toCall <= BB * 1.5 && s >= 3) return { action: "call" }; // fish limp-peel
     return { action: "fold" };
   }
 
-  // ---- postflop: Monte-Carlo equity (+ exploitative reads for Pro) ----
+  // ---- postflop: equity vs the FIELD, disciplined multiway ----
   let e = equity(p.hole, G.board, activeOpp, fast ? Math.min(80, T.iters) : T.iters);
   e = clamp(e + (rnd() - 0.5) * T.noise, 0, 1);
 
-  // Pro reads each live opponent's fold-to-bet rate and tunes to it:
-  //   table overfolds → bluff more · sticky callers → bluff less, value bigger
+  // Pro reads each live opponent's fold-to-bet tendency to tune bluffs & value width
   let foldRead = 0.34;
   if (T.exploit && G.read) {
     const os = G.players.filter((q) => !q.folded && q !== p)
       .map((q) => { const r = G.read[q.seat]; return r && r.faced > 0 ? r.folded / r.faced : 0.34; });
     if (os.length) foldRead = os.reduce((a, b) => a + b, 0) / os.length;
   }
-  const foldFactor = clamp(foldRead / 0.34, 0, 2.4);
-  const stationy = T.exploit && foldRead < 0.26;
-  const bluffChance = T.bluff * (T.exploit ? foldFactor : 1);
-  const raiseAt = clamp(T.raiseAt - (stationy ? 0.05 : 0), 0.4, 0.95);
-  const betAt = clamp(T.betAt - (stationy ? 0.06 : 0), 0.35, 0.9);
+  const stationy = T.exploit && foldRead < 0.26;   // sticky table → value harder, never bluff
+  const foldFactor = clamp(foldRead / 0.34, 0, 2.2);
+
+  const field = activeOpp + 1;
+  const fairShare = 1 / field;
+  const ahead = e - fairShare;                     // how far ahead of an average share of the field
+  const betEdge = T.betEdge - (stationy ? 0.03 : 0);
+  const raiseEdge = T.raiseEdge - (stationy ? 0.03 : 0);
+  // fold-equity collapses with more opponents → throttle bluffs hard multiway
+  const bluffMW = activeOpp <= 1 ? 1 : activeOpp === 2 ? 0.35 : 0.08;
+  const bluffChance = T.bluff * (T.exploit ? foldFactor : 1) * bluffMW;
   const vsize = T.size * (stationy ? 1.2 : 1);
 
-  const betSize = () => clamp(roundTo(pot * (vsize * (0.85 + rnd() * 0.4)), 10), BB, p.stack);
+  const betSize = () => clamp(roundTo(pot * (vsize * (0.85 + rnd() * 0.35)), 10), BB, p.stack);
   const raiseTarget = () => clamp(roundTo(G.currentBet + Math.max(G.minRaise, pot * vsize), 10),
     G.currentBet + G.minRaise, p.committedThisStreet + p.stack);
   const bluffRoll = rnd() < bluffChance;
-  const drawy = T.semibluff && e > 0.34 && e < 0.52;
+  const drawy = T.semibluff && ahead > -0.14 && ahead < 0.05 && activeOpp <= 2; // a draw, few opps
 
   if (canCheck) {
-    if (e >= raiseAt || (e >= betAt && rnd() < 0.82) || bluffRoll || (drawy && rnd() < 0.5)) {
-      const to = Math.min(p.committedThisStreet + betSize(), p.committedThisStreet + p.stack);
-      return { action: "raise", to };
-    }
+    if (ahead >= raiseEdge || bluffRoll || (drawy && rnd() < 0.5))
+      return { action: "raise", to: Math.min(p.committedThisStreet + betSize(), p.committedThisStreet + p.stack) };
+    if (ahead >= betEdge && rnd() < 0.85)
+      return { action: "raise", to: Math.min(p.committedThisStreet + betSize(), p.committedThisStreet + p.stack) };
     return { action: "check" };
   }
   // facing a bet
-  if (e >= raiseAt) return { action: "raise", to: raiseTarget() };
-  const need = T.usePotOdds ? potOdds + (T.margin || 0) : T.callFloor;
-  if (e >= need && toCall <= p.stack) {
-    if (drawy && rnd() < 0.35) return { action: "raise", to: raiseTarget() }; // semibluff raise
+  if (ahead >= raiseEdge) return { action: "raise", to: raiseTarget() };
+  const need = (T.usePotOdds ? potOdds + (T.margin || 0) : T.callFloor) + (activeOpp >= 3 ? 0.04 : 0);
+  const aheadGate = T.usePotOdds ? -0.06 : -0.30;  // fish ignore being behind the field; regs+ don't
+  if (e >= need && toCall <= p.stack && ahead > aheadGate) {
+    if (drawy && rnd() < 0.3) return { action: "raise", to: raiseTarget() };
     return { action: "call" };
   }
-  if (bluffRoll && toCall <= pot * 0.6 && p.stack > toCall * 3) return { action: "raise", to: raiseTarget() };
+  if (bluffRoll && activeOpp <= 2 && toCall <= pot * 0.5 && p.stack > toCall * 3)
+    return { action: "raise", to: raiseTarget() };
   return { action: "fold" };
 }
 
