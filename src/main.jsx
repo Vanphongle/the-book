@@ -7,6 +7,7 @@ import Baccarat from "./Baccarat.jsx";
 import Roulette from "./Roulette.jsx";
 import TienLen from "./TienLen.jsx";
 import BauCua from "./BauCua.jsx";
+import Poker from "./Poker.jsx";
 
 // Tiny hash router: #/craps → Bubble Craps game page, anything else → The Book.
 // The game is fully self-contained (play-money, localStorage) and never touches
@@ -24,6 +25,7 @@ function Root() {
   if (hash.startsWith("#/roulette")) return <Roulette />;
   if (hash.startsWith("#/tienlen")) return <TienLen />;
   if (hash.startsWith("#/baucua")) return <BauCua />;
+  if (hash.startsWith("#/poker")) return <Poker />;
   return <App />;
 }
 

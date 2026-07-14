@@ -910,6 +910,7 @@ export default function App() {
                   <a href="#/roulette" onClick={() => setGamesOpen(false)}>🎡 Roulette</a>
                   <a href="#/tienlen" onClick={() => setGamesOpen(false)}>🀄 Tiến Lên</a>
                   <a href="#/baucua" onClick={() => setGamesOpen(false)}>🦀 Bầu Cua</a>
+                  <a href="#/poker" onClick={() => setGamesOpen(false)}>♠️ Hold'em Poker</a>
                 </div>
               </>
             )}
