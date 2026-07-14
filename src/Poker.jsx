@@ -319,6 +319,7 @@ export default function Poker() {
 
   const [sim, setSim] = useState(false);
   const simRef = useRef(false);
+  const scheduledFor = useRef(-2); // seat a bot turn is already queued for (guards double-scheduling)
   const [simLevel, setSimLevel] = useState("pro");
   const simLevelRef = useRef("pro");
   useEffect(() => { simLevelRef.current = simLevel; }, [simLevel]);
@@ -336,6 +337,7 @@ export default function Poker() {
 
   // ── deal a new hand ──
   function startHand() {
+    scheduledFor.current = -2; // clear any stale bot-turn guard from the prior hand
     // refill busted stacks
     for (const p of g.players) {
       if (p.stack < BB) {
@@ -495,20 +497,26 @@ export default function Poker() {
   }
 
   // ── drive bot turns ──
+  // Called from several places (afterAction, closeStreet, the tick effect). The
+  // scheduledFor guard makes it idempotent: at most ONE timer is ever queued for
+  // a given seat, so a seat can't be acted on twice and desync the betting round.
   function maybeSchedule() {
     if (g.phase !== "betting") return;
     const p = g.players[g.actor];
     if (!p || (p.isHuman && !simRef.current)) return;
+    if (scheduledFor.current === g.actor) return; // already queued for this seat
+    scheduledFor.current = g.actor;
     const delay = simRef.current ? 130 : 620 + Math.floor(rnd() * 260);
     later(async () => {
-      if (!aliveRef.current || g.phase !== "betting" || g.actor < 0) return;
+      if (!aliveRef.current || g.phase !== "betting" || g.actor < 0) { scheduledFor.current = -2; return; }
       const cur = g.players[g.actor];
-      if (!cur || (cur.isHuman && !simRef.current)) return;
+      if (!cur || (cur.isHuman && !simRef.current)) { scheduledFor.current = -2; return; }
       const lvl = (g.actor === 0 && simRef.current) ? simLevelRef.current : g.level;
       const dec = botDecision(g, g.actor, simRef.current, lvl);
       applyAction(g.actor, dec.action, dec.to);
       rr();
       await sleep(simRef.current ? 60 : 260);
+      scheduledFor.current = -2; // this seat is done; allow the next one to queue
       if (aliveRef.current) await afterAction();
     }, delay);
   }
@@ -519,6 +527,18 @@ export default function Poker() {
       if (p && (!p.isHuman || simRef.current)) maybeSchedule();
     }
   }, [tick]); // eslint-disable-line
+
+  // Watchdog: if a bot's turn ever stalls (a dropped timer, some edge case),
+  // re-arm it so the table can never freeze. Human turns are left untouched —
+  // you have no clock and can take as long as you like.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (g.phase !== "betting" || scheduledFor.current !== -2) return;
+      const p = g.players[g.actor];
+      if (p && !p.folded && (!p.isHuman || simRef.current)) maybeSchedule();
+    }, 1600);
+    return () => clearInterval(iv);
+  }, []); // eslint-disable-line
 
   // ── human actions ──
   const me = g.players[0];
